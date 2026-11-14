@@ -776,10 +776,11 @@ function validateMergedReplica(
       if (person.kind === "member") {
         const membership = raw
           .prepare(
-            "SELECT 1 FROM pos_memberships WHERE person_id=? AND status='active' AND start_date<=? AND ((unit<>'sessions' AND end_date>?) OR unit='sessions' AND (sessions_remaining>0 OR EXISTS(SELECT 1 FROM pos_membership_uses u WHERE u.membership_id=pos_memberships.id AND u.event_id=?)))",
+            "SELECT 1 FROM pos_memberships WHERE person_id=? AND status='active' AND start_date<=? AND ((unit<>'sessions' AND end_date>?) OR unit='sessions' AND (end_date IS NULL OR end_date>?) AND (sessions_remaining>0 OR EXISTS(SELECT 1 FROM pos_membership_uses u WHERE u.membership_id=pos_memberships.id AND u.event_id=?)))",
           )
           .get(
             person.id,
+            event.local_date,
             event.local_date,
             event.local_date,
             eventIds.get(Number(event.id))!,
@@ -806,13 +807,11 @@ function validateMergedReplica(
     if (membership.status !== "active") continue;
     const overlap = raw
       .prepare(
-        "SELECT 1 FROM pos_memberships WHERE person_id=? AND id<>? AND status='active' AND ((unit='sessions' AND sessions_remaining>0) OR (?='sessions' AND ?>0) OR (start_date<? AND end_date>?)) LIMIT 1",
+        "SELECT 1 FROM pos_memberships WHERE person_id=? AND id<>? AND status='active' AND (unit<>'sessions' OR sessions_remaining>0) AND start_date<? AND COALESCE(end_date,'9999-12-31')>? LIMIT 1",
       )
       .get(
         membership.person_id,
         membership.id,
-        membership.unit,
-        membership.sessions_remaining || 0,
         membership.end_date || "9999-12-31",
         membership.start_date,
       );

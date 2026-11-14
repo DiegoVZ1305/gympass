@@ -103,11 +103,11 @@ function effectivePeopleSql(today: string, includeDeleted = false) {
   return `(SELECT p.id,p.name,p.document,p.email,p.phone,p.department,p.kind,p.status,p.schedule_id,p.notes,p.created_at,p.photo_path,p.deleted_at,
     p.expires legacy_expires,
     CASE WHEN p.kind='member' AND NOT ${legacyCoverageSql(today)} AND (p.legacy_access=0 OR EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id)) THEN 1 ELSE 0 END membership_managed,
-    COALESCE((SELECT SUM(m.sessions_remaining) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<='${today}'),0) sessions_remaining,
-    (SELECT MAX(date(m.end_date,'-1 day')) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit<>'sessions' AND m.start_date<='${today}' AND m.end_date>'${today}') valid_until,
+    COALESCE((SELECT SUM(m.sessions_remaining) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<='${today}' AND (m.end_date IS NULL OR m.end_date>'${today}')),0) sessions_remaining,
+    (SELECT MAX(date(m.end_date,'-1 day')) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND (m.unit<>'sessions' OR m.sessions_remaining>0) AND m.start_date<='${today}' AND m.end_date>'${today}') valid_until,
     CASE WHEN p.kind='member' AND NOT ${legacyCoverageSql(today)} AND (p.legacy_access=0 OR EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id)) THEN
-      CASE WHEN EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<='${today}' AND m.sessions_remaining>0) THEN NULL
-      ELSE COALESCE((SELECT MAX(date(m.end_date,'-1 day')) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit<>'sessions' AND m.start_date<='${today}'),date('${today}','-1 day')) END
+      CASE WHEN EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<='${today}' AND m.sessions_remaining>0 AND m.end_date IS NULL) THEN NULL
+      ELSE COALESCE((SELECT MAX(date(m.end_date,'-1 day')) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND (m.unit<>'sessions' OR m.sessions_remaining>0) AND m.start_date<='${today}'),date('${today}','-1 day')) END
     ELSE p.expires END expires
     FROM people p${includeDeleted ? '' : ' WHERE p.deleted_at IS NULL'})`;
 }
@@ -731,7 +731,14 @@ export class Service {
       );
     const code = this.codec.open(row.code_cipher, row.id);
     const { code_cipher, active, ...card } = row;
-    return { ...card, code };
+    const plans = await this.all(
+      `SELECT name,unit,start_date,end_date,sessions_remaining FROM pos_memberships
+       WHERE person_id=? AND status='active' AND start_date<=?
+         AND (end_date IS NULL OR end_date>?) AND (unit<>'sessions' OR sessions_remaining>0)
+       ORDER BY start_date DESC,created_at DESC,rowid DESC`,
+      row.person_id, today, today,
+    );
+    return { ...card, code, plan_name: plans.map((plan) => plan.name).join(' · ') || 'Sin plan vigente' };
   }
 
   async expirations(params: URLSearchParams, at = new Date()) {
@@ -947,8 +954,8 @@ export class Service {
         EXISTS(SELECT 1 FROM person_zones pz WHERE pz.person_id=p.id AND pz.zone_id=z.id) has_zone,
         ((p.legacy_access=0 OR EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id)) AND NOT ${legacyCoverageSql(local.date)}) pos_managed,
         EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.start_date<=?
-          AND ((m.unit<>'sessions' AND m.end_date>?) OR (m.unit='sessions' AND m.sessions_remaining>0))) pos_valid,
-        EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<=?) pos_sessions
+          AND ((m.unit<>'sessions' AND m.end_date>?) OR (m.unit='sessions' AND m.sessions_remaining>0 AND (m.end_date IS NULL OR m.end_date>'${local.date}')))) pos_valid,
+        EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<=? AND (m.end_date IS NULL OR m.end_date>'${local.date}')) pos_sessions
       FROM zones z LEFT JOIN credentials c ON c.hash=?
       LEFT JOIN visits v ON v.credential_id=c.id AND ?=0
       LEFT JOIN people p ON (p.id=CASE WHEN ?=1 THEN ? ELSE c.person_id END) AND p.deleted_at IS NULL

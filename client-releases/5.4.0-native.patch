@@ -1,0 +1,3398 @@
+--- a/desktop/builder.cjs
++++ b/desktop/builder.cjs
+@@ -44,6 +44,9 @@
+       'server/migrations/012_invitation_editor.sql',
+       'server/migrations/013_event_workspace.sql',
+       'server/backups.js',
++      'server/backup-worker.mjs',
++      'server/gym-member-counts-worker.mjs',
++      'server/migrations/026_session_deadlines.sql',
+       'server/activation.js',
+       'server/activation-secret.js',
+       'server/reset.js',
+--- a/desktop/package.json
++++ b/desktop/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "gympass-desktop",
+   "productName": "GymPASS",
+-  "version": "5.3.0",
++  "version": "5.4.0",
+   "description": "Entradas, salidas y tiempos de permanencia para gimnasios",
+   "author": "GymPASS",
+   "license": "UNLICENSED",
+--- a/lib/access-feedback.ts
++++ b/lib/access-feedback.ts
+@@ -6,9 +6,9 @@
+ export function feedbackSound(event: Pick<AccessEvent, 'allowed' | 'direction'>) {
+   return !event.allowed ? 'denied' : event.direction === 'exit' ? 'exit' : 'entry';
+ }
+-export function feedbackAnnouncement(direction: string, personName = '') {
++export function feedbackAnnouncement(direction: string, personName = '', allowed = true) {
+   const name = personName.trim().replace(/\s+/g, ' ');
+-  return `${direction === 'exit' ? 'Saliendo' : 'Entrando'}${name ? `, ${name}` : ''}.`;
++  return `${!allowed ? 'Acceso denegado' : direction === 'exit' ? 'Saliendo' : 'Entrando'}${name ? `, ${name}` : ''}.`;
+ }
+ 
+ export type VoiceGender = 'auto' | 'female' | 'male';
+@@ -46,7 +46,7 @@
+ export function preferredSpanishVoice<T extends FeedbackVoice>(voices: T[], online = true, choice: Partial<VoiceSettings> = {}): T | undefined {
+   const score = (voice: T) => {
+     const language = voice.lang.replaceAll('_', '-').toLowerCase();
+-    return (isNaturalVoice(voice) ? 100 : 0) +
++    return (voice.localService ? 200 : 0) + (isNaturalVoice(voice) ? 100 : 0) +
+       (/google/i.test(voice.name) ? 40 : 0) +
+       (!voice.localService ? 20 : 0) +
+       (language === 'es-bo' ? 15 : language === 'es-mx' || language === 'es-419' ? 10 : 0) +
+--- a/lib/backup-limits.ts
++++ b/lib/backup-limits.ts
+@@ -1 +1,4 @@
+-export const maxBackupTransferBytes = 256 * 1024 * 1024;
++// File transfers stream to disk; this is a disk/transfer allowance, not an allocation in RAM.
++export const maxBackupTransferBytes = 4 * 1024 * 1024 * 1024;
++export const backupTransferLimitLabel = '4 GiB';
++export const maxBufferedBackupBytes = 256 * 1024 * 1024;
+--- a/lib/card.ts
++++ b/lib/card.ts
+@@ -12,6 +12,7 @@
+   code: string;
+   expires: string | null;
+   access_note?: string;
++  plan_name?: string;
+   valid_on?: string;
+   /** A data: URI for the person's photo, or null to draw initials instead. */
+   photo?: string | null;
+@@ -104,9 +105,6 @@
+ 
+   const qrX = (width - qrBox) / 2;
+   const qrY = 654;
+-  const photoSize = 150;
+-  const photoX = (width - photoSize) / 2;
+-  const photoY = 176;
+   const validity = card.valid_on
+     ? `Válida solo el ${card.valid_on}`
+     : card.access_note
+@@ -117,7 +115,6 @@
+ 
+   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Credencial de ${escapeXml(card.name)}">
+   <defs>
+-    <clipPath id="photoClip"><circle cx="${width / 2}" cy="${photoY + photoSize / 2}" r="${photoSize / 2}"/></clipPath>
+     <filter id="watermarkGray"><feColorMatrix type="saturate" values="0"/></filter>
+   </defs>
+   <rect width="${width}" height="${height}" rx="34" fill="#ffffff"/>
+@@ -128,13 +125,9 @@
+   <image x="${width / 2 - 120}" y="16" width="240" height="58" href="${gympassLogo}" aria-label="GymPASS"/>
+   <text x="${width / 2}" y="100" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#ffffff" opacity="0.9">${escapeXml(fit(card.organization, 38))}</text>
+ 
+-  ${
+-    card.photo
+-      ? `<image href="${escapeXml(card.photo)}" x="${photoX}" y="${photoY}" width="${photoSize}" height="${photoSize}" preserveAspectRatio="xMidYMid slice" clip-path="url(#photoClip)"/>`
+-      : `<circle cx="${width / 2}" cy="${photoY + photoSize / 2}" r="${photoSize / 2}" fill="#eef1f4"/>
+-         <text x="${width / 2}" y="${photoY + photoSize / 2 + 20}" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="56" font-weight="650" fill="${accent}">${escapeXml(initials(card.name))}</text>`
+-  }
+-  <circle cx="${width / 2}" cy="${photoY + photoSize / 2}" r="${photoSize / 2}" fill="none" stroke="#dfe3e8" stroke-width="3"/>
++  <text x="${width / 2}" y="206" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700" fill="#5b6471" letter-spacing="2">PLAN</text>
++  ${invitationLines(card.plan_name || 'Sin plan vigente', 28, 2).map((line, index) =>
++    `<text x="${width / 2}" y="${258 + index * 40}" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="32" font-weight="700" fill="${accent}">${escapeXml(line)}</text>`).join('')}
+ 
+   <text x="${width / 2}" y="378" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#5b6471" letter-spacing="2.4">${escapeXml(fit((card.label || 'CREDENCIAL').toUpperCase(), 40))}</text>
+   ${invitationLines(card.name, 28, 2)
+--- a/lib/pos-types.ts
++++ b/lib/pos-types.ts
+@@ -1,4 +1,9 @@
+ import type { ProductMargin } from './product-costs.ts';
++export function defaultSessionUntil(start: string) {
++  const end = new Date(planEndDate(start, 'months', 1)! + 'T12:00:00Z');
++  end.setUTCDate(end.getUTCDate() - 1);
++  return end.toISOString().slice(0, 10);
++}
+ export type PlanUnit = 'days' | 'months' | 'sessions';
+ export function planEndDate(start: string, unit: PlanUnit, duration: number): string | null {
+   if (unit === 'sessions') return null;
+@@ -54,6 +59,8 @@
+     notes?: string;
+   };
+   start_date?: string;
++  /** Último día incluido para completar un plan por sesiones. */
++  sessions_until?: string;
+   replace_active?: { reason: string };
+   payment_method: PaymentMethod;
+   lines: PosLineInput[];
+--- a/lib/pos.ts
++++ b/lib/pos.ts
+@@ -74,6 +74,7 @@
+     .extend({ kind: z.enum(['member', 'employee']), status: z.literal('active'), expires: z.null().default(null) })
+     .optional(),
+   start_date: date.optional(),
++  sessions_until: date.optional(),
+   // Solo el administrador: da de baja el plan en curso del socio para vender uno nuevo.
+   replace_active: z.object({ reason: z.string().trim().min(3).max(300) }).optional(),
+   payment_method: z.enum(['cash', 'transfer', 'card']),
+@@ -254,6 +255,7 @@
+       expected_total_cents: p.expected_total_cents ?? null,
+       person_id: p.person_id || null,
+       start_date: p.start_date || null,
++      ...(p.sessions_until ? { sessions_until: p.sessions_until } : {}),
+       ...(p.replace_active ? { replace_active: p.replace_active.reason } : {}),
+       payment_method: p.payment_method,
+       lines: p.lines,
+@@ -303,6 +305,8 @@
+           line.id,
+         );
+         if (!item || !item.active) throw new ApiError(409, 'El producto o plan ya no está disponible.');
++        if (line.kind === 'plan' && item.unit === 'sessions' && (!p.sessions_until || p.sessions_until < start))
++          throw new ApiError(400, 'Indica la fecha límite para completar las sesiones, igual o posterior al inicio del plan.');
+         if (
+           line.kind === 'plan' &&
+           line.expected_plan &&
+@@ -388,7 +392,7 @@
+               item.duration,
+               item.price_cents,
+               start,
+-              planEndDate(start, item.unit, item.duration),
++              item.unit === 'sessions' ? nextDate(p.sessions_until!, 1) : planEndDate(start, item.unit, item.duration),
+               item.unit === 'sessions' ? item.duration : null,
+               item.unit === 'sessions' ? item.duration : null,
+               now,
+@@ -605,9 +609,10 @@
+   async planGate(personId: string, today: string): Promise<PlanGate> {
+     const rows = (await this.service.all(
+       `SELECT name,unit,start_date,end_date,sessions_remaining FROM pos_memberships
+-       WHERE person_id=? AND status='active' AND ((unit<>'sessions' AND end_date>?) OR (unit='sessions' AND sessions_remaining>0))
++       WHERE person_id=? AND status='active' AND ((unit<>'sessions' AND end_date>?) OR (unit='sessions' AND sessions_remaining>0 AND (end_date IS NULL OR end_date>?)))
+        ORDER BY start_date,created_at,rowid`,
+       personId,
++      today,
+       today,
+     )) as {
+       name: string;
+@@ -636,7 +641,7 @@
+     if (sessions)
+       return {
+         state: 'blocked',
+-        message: `Ya tiene «${sessions.name}» con ${sessions.sessions_remaining} sesión(es) disponibles. Podrá comprar otro plan cuando las agote.`,
++        message: `Ya tiene «${sessions.name}» con ${sessions.sessions_remaining} sesión(es) disponibles${sessions.end_date ? ` hasta el ${nextDate(sessions.end_date, -1)}` : ''}. Podrá comprar otro plan cuando las agote o venza el plazo.`,
+       };
+     const queued = rows.find((row) => row.start_date > today);
+     if (queued)
+@@ -660,8 +665,8 @@
+       'SELECT * FROM pos_memberships WHERE person_id=? ORDER BY created_at DESC,rowid DESC',
+       id,
+     )) as PosMembership[];
+-    const active = memberships.filter((m) => m.status === 'active' && m.start_date <= today);
+-    const temporal = active.filter((m) => m.end_date && m.end_date > today);
++    const active = memberships.filter((m) => m.status === 'active' && m.start_date <= today && (!m.end_date || m.end_date > today));
++    const temporal = active.filter((m) => m.end_date && (m.unit !== 'sessions' || (m.sessions_remaining || 0) > 0));
+     const sessions = active.reduce((sum, m) => sum + (m.sessions_remaining || 0), 0);
+     const legacyValid = person.legacy_access === 1 && person.expires && person.expires >= today && !memberships.some((m) => m.start_date <= today);
+     const managed = (person.legacy_access !== 1 || memberships.length > 0) && !legacyValid;
+--- a/lib/replication.ts
++++ b/lib/replication.ts
+@@ -1,4 +1,5 @@
+ import { appearanceColumns } from './gym-appearance.ts';
++import { sessionDeadlineTriggers } from './session-deadlines.ts';
+ import { productCostColumnSql, productCostTables } from './product-costs.ts';
+ export { productCostColumnSql, productCostTables };
+ export type SyncValue = string | number | null;
+@@ -46,7 +47,10 @@
+ /** Extend older cached copies without assigning a fabricated purchase cost. */
+ export function upgradeManagementSnapshot(snapshot: SyncSnapshot): SyncSnapshot {
+   const appearance = upgradeAppearanceSnapshot(snapshot);
+-  return { ...appearance, tables: appearance.tables.map(table => {
++  return { ...appearance, triggers: appearance.triggers.map(sql => {
++    const name = /CREATE TRIGGER (pos_one_plan|pos_access_use)\b/i.exec(sql)?.[1] as keyof typeof sessionDeadlineTriggers | undefined;
++    return name ? sessionDeadlineTriggers[name] : sql;
++  }), tables: appearance.tables.map(table => {
+     if (!productCostTables.some(name => name === table.name) || table.columns.some(column => column.name === 'cost_cents')) return table;
+     const sql = table.sql && !/\bcost_cents\b/.test(table.sql)
+       ? table.sql.replace(/\)\s*$/, ', cost_cents ' + productCostColumnSql + ')') : table.sql;
+--- a/lib/service.ts
++++ b/lib/service.ts
+@@ -103,11 +103,11 @@
+   return `(SELECT p.id,p.name,p.document,p.email,p.phone,p.department,p.kind,p.status,p.schedule_id,p.notes,p.created_at,p.photo_path,p.deleted_at,
+     p.expires legacy_expires,
+     CASE WHEN p.kind='member' AND NOT ${legacyCoverageSql(today)} AND (p.legacy_access=0 OR EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id)) THEN 1 ELSE 0 END membership_managed,
+-    COALESCE((SELECT SUM(m.sessions_remaining) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<='${today}'),0) sessions_remaining,
+-    (SELECT MAX(date(m.end_date,'-1 day')) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit<>'sessions' AND m.start_date<='${today}' AND m.end_date>'${today}') valid_until,
++    COALESCE((SELECT SUM(m.sessions_remaining) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<='${today}' AND (m.end_date IS NULL OR m.end_date>'${today}')),0) sessions_remaining,
++    (SELECT MAX(date(m.end_date,'-1 day')) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND (m.unit<>'sessions' OR m.sessions_remaining>0) AND m.start_date<='${today}' AND m.end_date>'${today}') valid_until,
+     CASE WHEN p.kind='member' AND NOT ${legacyCoverageSql(today)} AND (p.legacy_access=0 OR EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id)) THEN
+-      CASE WHEN EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<='${today}' AND m.sessions_remaining>0) THEN NULL
+-      ELSE COALESCE((SELECT MAX(date(m.end_date,'-1 day')) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit<>'sessions' AND m.start_date<='${today}'),date('${today}','-1 day')) END
++      CASE WHEN EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<='${today}' AND m.sessions_remaining>0 AND m.end_date IS NULL) THEN NULL
++      ELSE COALESCE((SELECT MAX(date(m.end_date,'-1 day')) FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND (m.unit<>'sessions' OR m.sessions_remaining>0) AND m.start_date<='${today}'),date('${today}','-1 day')) END
+     ELSE p.expires END expires
+     FROM people p${includeDeleted ? '' : ' WHERE p.deleted_at IS NULL'})`;
+ }
+@@ -731,7 +731,14 @@
+       );
+     const code = this.codec.open(row.code_cipher, row.id);
+     const { code_cipher, active, ...card } = row;
+-    return { ...card, code };
++    const plans = await this.all(
++      `SELECT name,unit,start_date,end_date,sessions_remaining FROM pos_memberships
++       WHERE person_id=? AND status='active' AND start_date<=?
++         AND (end_date IS NULL OR end_date>?) AND (unit<>'sessions' OR sessions_remaining>0)
++       ORDER BY start_date DESC,created_at DESC,rowid DESC`,
++      row.person_id, today, today,
++    );
++    return { ...card, code, plan_name: plans.map((plan) => plan.name).join(' · ') || 'Sin plan vigente' };
+   }
+ 
+   async expirations(params: URLSearchParams, at = new Date()) {
+@@ -947,8 +954,8 @@
+         EXISTS(SELECT 1 FROM person_zones pz WHERE pz.person_id=p.id AND pz.zone_id=z.id) has_zone,
+         ((p.legacy_access=0 OR EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id)) AND NOT ${legacyCoverageSql(local.date)}) pos_managed,
+         EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.start_date<=?
+-          AND ((m.unit<>'sessions' AND m.end_date>?) OR (m.unit='sessions' AND m.sessions_remaining>0))) pos_valid,
+-        EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<=?) pos_sessions
++          AND ((m.unit<>'sessions' AND m.end_date>?) OR (m.unit='sessions' AND m.sessions_remaining>0 AND (m.end_date IS NULL OR m.end_date>'${local.date}')))) pos_valid,
++        EXISTS(SELECT 1 FROM pos_memberships m WHERE m.person_id=p.id AND m.status='active' AND m.unit='sessions' AND m.start_date<=? AND (m.end_date IS NULL OR m.end_date>'${local.date}')) pos_sessions
+       FROM zones z LEFT JOIN credentials c ON c.hash=?
+       LEFT JOIN visits v ON v.credential_id=c.id AND ?=0
+       LEFT JOIN people p ON (p.id=CASE WHEN ?=1 THEN ? ELSE c.person_id END) AND p.deleted_at IS NULL
+--- /dev/null
++++ b/lib/session-deadlines.ts
+@@ -0,0 +1,20 @@
++/** Reglas compartidas con la migración 026 para actualizar copias móviles guardadas. */
++export const sessionDeadlineTriggers = {
++  pos_one_plan: `CREATE TRIGGER pos_one_plan BEFORE INSERT ON pos_memberships BEGIN
++ SELECT CASE WHEN EXISTS(
++  SELECT 1 FROM pos_memberships m
++  WHERE m.person_id=NEW.person_id AND m.status='active' AND m.id<>NEW.id
++   AND ((m.unit<>'sessions' AND m.end_date>NEW.start_date)
++     OR (m.unit='sessions' AND m.sessions_remaining>0 AND (m.end_date IS NULL OR m.end_date>NEW.start_date)))
++ ) THEN RAISE(ABORT,'POS_ACTIVE_PLAN') END;
++END`,
++  pos_access_use: `CREATE TRIGGER pos_access_use AFTER INSERT ON events
++WHEN NEW.allowed=1 AND NEW.direction='entry' AND NEW.zone_id='general' AND EXISTS(SELECT 1 FROM people WHERE id=NEW.person_id AND kind='member') BEGIN
++ INSERT INTO pos_membership_uses(event_id,membership_id)
++ SELECT NEW.id,id FROM pos_memberships WHERE person_id=NEW.person_id AND status='active' AND start_date<=NEW.local_date
++  AND ((unit<>'sessions' AND end_date>NEW.local_date)
++    OR (unit='sessions' AND sessions_remaining>0 AND (end_date IS NULL OR end_date>NEW.local_date)))
++ ORDER BY CASE WHEN unit='sessions' THEN 1 ELSE 0 END,created_at,rowid LIMIT 1;
++ UPDATE pos_memberships SET sessions_remaining=sessions_remaining-1 WHERE unit='sessions' AND id=(SELECT membership_id FROM pos_membership_uses WHERE event_id=NEW.id);
++END`,
++};
+--- a/mobile/app.json
++++ b/mobile/app.json
+@@ -6,12 +6,12 @@
+       "ios",
+       "android"
+     ],
+-    "version": "5.3.0",
++    "version": "5.4.0",
+     "orientation": "default",
+     "userInterfaceStyle": "automatic",
+     "ios": {
+       "bundleIdentifier": "local.gympass.controlacceso.mobile",
+-      "buildNumber": "5300",
++      "buildNumber": "5400",
+       "supportsTablet": true,
+       "infoPlist": {
+         "NSLocalNetworkUsageDescription": "GymPASS se conecta con la computadora de la misma red Wi-Fi para registrar accesos.",
+@@ -19,12 +19,12 @@
+           "NSAllowsArbitraryLoads": false,
+           "NSAllowsLocalNetworking": true
+         },
+-        "NSCameraUsageDescription": "GymPASS necesita la cámara para leer códigos QR y fotografiar socios."
++        "NSCameraUsageDescription": "GymPASS necesita la cámara para leer códigos QR."
+       }
+     },
+     "android": {
+       "package": "local.gympass.controlacceso.mobile",
+-      "versionCode": 5300,
++      "versionCode": 5400,
+       "permissions": [
+         "android.permission.CAMERA"
+       ],
+--- a/mobile/package-lock.json
++++ b/mobile/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "gympass-mobile",
+-  "version": "5.3.0",
++  "version": "5.4.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "gympass-mobile",
+-      "version": "5.3.0",
++      "version": "5.4.0",
+       "dependencies": {
+         "@noble/ciphers": "2.4.0",
+         "expo": "~58.0.21",
+--- a/mobile/package.json
++++ b/mobile/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "gympass-mobile",
+-  "version": "5.3.0",
++  "version": "5.4.0",
+   "private": true,
+   "type": "module",
+   "main": "index.ts",
+--- a/mobile/plugins/native/GympassOfflineModule.kt
++++ b/mobile/plugins/native/GympassOfflineModule.kt
+@@ -2,6 +2,8 @@
+ 
+ import android.net.ConnectivityManager
+ import android.net.Network
++import android.speech.tts.TextToSpeech
++import java.util.Locale
+ import com.facebook.react.bridge.*
+ import com.facebook.react.modules.core.DeviceEventManagerModule
+ import java.net.InetAddress
+@@ -15,6 +17,34 @@
+ class GympassOfflineModule(private val context: ReactApplicationContext) : ReactContextBaseJavaModule(context) {
+   private var server: ServerSocket? = null
+   private var address: String? = null
++  private var voice: TextToSpeech? = null
++  private var voiceReady = false
++  @ReactMethod fun prepareVoice(promise: Promise) {
++    UiThreadUtil.runOnUiThread {
++      if (voice != null) { promise.resolve(voiceReady); return@runOnUiThread }
++      voice = TextToSpeech(context) { status ->
++        val engine = voice
++        if (status == TextToSpeech.SUCCESS && engine != null) {
++          val spanish = Locale.forLanguageTag("es-BO")
++          val result = engine.setLanguage(spanish)
++          voiceReady = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
++          engine.voices?.filter { it.locale.language == "es" && !it.isNetworkConnectionRequired }
++            ?.sortedByDescending { if (it.locale.country == "BO") 2 else if (it.locale.country == "MX") 1 else 0 }
++            ?.firstOrNull()?.let { engine.voice = it; voiceReady = true }
++        }
++        promise.resolve(voiceReady)
++      }
++    }
++  }
++  @ReactMethod fun speakAccess(text: String, rate: Double, promise: Promise) {
++    UiThreadUtil.runOnUiThread {
++      val engine = voice
++      if (!voiceReady || engine == null || text.length > 180) { promise.resolve(false); return@runOnUiThread }
++      engine.setSpeechRate(rate.coerceIn(0.5, 3.0).toFloat())
++      promise.resolve(engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "gympass-access") == TextToSpeech.SUCCESS)
++    }
++  }
++  @ReactMethod fun stopAccessVoice() { UiThreadUtil.runOnUiThread { voice?.stop() } }
+   private val workers = Executors.newFixedThreadPool(4)
+   private val connections = context.getSystemService(ConnectivityManager::class.java)
+   private val callback = object : ConnectivityManager.NetworkCallback() {
+@@ -96,6 +126,7 @@
+     }
+   }
+   override fun invalidate() {
++    UiThreadUtil.runOnUiThread { voice?.stop(); voice?.shutdown(); voice = null; voiceReady = false }
+     try { connections.unregisterNetworkCallback(callback) } catch (_: Exception) {}
+     server?.close(); workers.shutdownNow(); super.invalidate()
+   }
+--- a/mobile/plugins/with-offline-management.cjs
++++ b/mobile/plugins/with-offline-management.cjs
+@@ -5,6 +5,10 @@
+ module.exports = function withOfflineManagement(config) {
+   config = withAndroidManifest(config, mod => {
+     const manifest = mod.modResults.manifest;
++    manifest.queries ||= [{}];
++    manifest.queries[0].intent ||= [];
++    if (!manifest.queries[0].intent.some(entry => entry.action?.some(action => action.$['android:name'] === 'android.intent.action.TTS_SERVICE')))
++      manifest.queries[0].intent.push({ action: [{ $: { 'android:name': 'android.intent.action.TTS_SERVICE' } }] });
+     manifest['uses-permission'] ||= [];
+     if (!manifest['uses-permission'].some(entry => entry.$['android:name'] === 'android.permission.ACCESS_NETWORK_STATE')) manifest['uses-permission'].push({ $: { 'android:name': 'android.permission.ACCESS_NETWORK_STATE' } });
+     return mod;
+--- a/mobile/src/GympassApp.tsx
++++ b/mobile/src/GympassApp.tsx
+@@ -143,8 +143,10 @@
+   // ofrece Reintentar en vez de esperar indefinidamente.
+   useEffect(() => {
+     startWatchdog();
++    void NativeModules?.GympassOffline?.prepareVoice?.().catch(() => {});
+     return () => {
+       cancelTransfer();
++      NativeModules?.GympassOffline?.stopAccessVoice?.();
+       stopWatchdog();
+     };
+   }, []);
+@@ -242,9 +244,11 @@
+     pageReady();
+     setDetail('la página respondió');
+     let id: string | undefined;
++    let messageType = '';
+     try {
+       if (event.nativeEvent.data.length > 12 * 1024 * 1024) throw Error('La solicitud es demasiado grande.');
+       const message = JSON.parse(event.nativeEvent.data);
++      messageType = message.type;
+       if (typeof message.id !== 'string' || !/^[a-z0-9-]{1,80}$/.test(message.id)) return;
+       id = message.id;
+       if (message.type === 'management') {
+@@ -256,6 +260,16 @@
+         return;
+       }
+       switch (message.type) {
++        case 'speech':
++          if (typeof message.text !== 'string' || message.text.length > 180 ||
++              typeof message.rate !== 'number' || !Number.isFinite(message.rate) || message.rate < 0.5 || message.rate > 3)
++            throw Error('Aviso de voz inválido.');
++          if (!await NativeModules.GympassOffline?.speakAccess(message.text, message.rate))
++            throw Error('La voz del teléfono no está disponible.');
++          break;
++        case 'speech-stop':
++          NativeModules.GympassOffline?.stopAccessVoice();
++          break;
+         case 'theme':
+           if (pendingTheme.current !== null && pendingTheme.current !== (message.dark === true)) {
+             sendThemeToWeb(pendingTheme.current);
+@@ -338,7 +352,7 @@
+       }
+       web.current?.injectJavaScript(`window.__gympassNativeReply?.(${JSON.stringify(id)}, true); true;`);
+     } catch (cause) {
+-      cancelTransfer();
++      if (!['speech', 'speech-stop'].includes(messageType)) cancelTransfer();
+       const text = cause instanceof Error ? cause.message : 'No se pudo completar la operación.';
+       if (id)
+         web.current?.injectJavaScript(
+--- a/mobile/src/ScanFeedback.tsx
++++ b/mobile/src/ScanFeedback.tsx
+@@ -1,6 +1,6 @@
+ import { oliveGreen } from '../../lib/theme';
+ import { useEffect, useRef, useState } from 'react';
+-import { AccessibilityInfo, Animated, Pressable, StyleSheet, Text, View, Image } from 'react-native';
++import { AccessibilityInfo, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+ import Svg, { Circle, Path } from 'react-native-svg';
+ import { accessPresentation, feedbackTiming } from '../../lib/access-feedback';
+ import type { AccessEvent } from './api';
+@@ -21,7 +21,6 @@
+   const [visible, setVisible] = useState(true);
+   const presentation = accessPresentation(event);
+   const { title, detail } = presentation;
+-  const [photoFailed, setPhotoFailed] = useState(false);
+   useEffect(() => {
+     let active = true;
+     let animation: Animated.CompositeAnimation | undefined;
+@@ -67,16 +66,7 @@
+     >
+       {event.person_id ? (
+         <View style={[styles.avatar, compact && styles.compactAvatar]}>
+-          {event.photo_uri && !photoFailed ? (
+-            <Image
+-              source={{ uri: event.photo_uri }}
+-              accessibilityLabel={'Foto de ' + event.person_name}
+-              onError={() => setPhotoFailed(true)}
+-              style={styles.photo}
+-            />
+-          ) : (
+-            <Text style={[styles.initials, compact && styles.compactInitials]}>{presentation.initials}</Text>
+-          )}
++          <Text style={[styles.initials, compact && styles.compactInitials]}>{presentation.initials}</Text>
+         </View>
+       ) : (
+         <ResultIcon allowed={!!event.allowed} size={compact ? 34 : 44} />
+--- a/mobile/src/offline.ts
++++ b/mobile/src/offline.ts
+@@ -6,6 +6,7 @@
+ import { decodeBase64, mobileCredentialCodec } from './credential-codec';
+ import { appearanceColumns } from '../../lib/gym-appearance';
+ import { localParts } from '../../lib/domain';
++import { sessionDeadlineTriggers } from '../../lib/session-deadlines';
+ import {
+   upgradeManagementSnapshot,
+   productCostColumnSql,
+@@ -231,7 +232,13 @@
+       if (columns.length && !columns.some(column => column.name === 'cost_cents'))
+         await this.db.execAsync(`ALTER TABLE ${table} ADD COLUMN cost_cents ${productCostColumnSql}`);
+     }
+-
++    const triggers = await this.db.getAllAsync<{ name: string; sql: string }>("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ('pos_one_plan','pos_access_use')");
++    for (const trigger of triggers) {
++      const sql = sessionDeadlineTriggers[trigger.name as keyof typeof sessionDeadlineTriggers];
++      if (sql && trigger.sql !== sql) {
++        await this.db.execAsync(`BEGIN IMMEDIATE; DROP TRIGGER "${trigger.name}"; ${sql}; COMMIT;`);
++      }
++    }
+   }
+   private async install(snapshot: SyncSnapshot) {
+     snapshot = upgradeManagementSnapshot(snapshot);
+--- a/mobile/src/web-bridge.ts
++++ b/mobile/src/web-bridge.ts
+@@ -13,13 +13,13 @@
+     clearTimeout(work.timer);
+     ok ? work.resolve() : work.reject(new Error(message || 'No se pudo completar la operación.'));
+   };
+-  function send(type, data = {}) {
++  function send(type, data = {}, timeout = 300000) {
+     const id = Date.now().toString(36) + '-' + (++sequence);
+     return new Promise((resolve, reject) => {
+       const timer = setTimeout(() => {
+         pending.delete(id);
+         reject(new Error('La operación tardó demasiado. Vuelve a intentarlo.'));
+-      }, 300000);
++      }, timeout);
+       pending.set(id, { resolve, reject, timer });
+       window.ReactNativeWebView.postMessage(JSON.stringify({ type, id, ...data }));
+     });
+@@ -32,6 +32,10 @@
+       reader.readAsDataURL(blob);
+     });
+   }
++  window.__gympassNativeVoice = {
++    speak: (text, rate) => send('speech', { text, rate }, 800).then(() => true, () => false),
++    stop: () => { send('speech-stop', {}, 800).catch(() => {}); }
++  };
+   let transferring = false;
+   async function transfer(blob, name, action, metadata = {}) {
+     if (transferring) throw new Error('Espera a que termine el archivo anterior.');
+--- a/mobile/tests/management.test.ts
++++ b/mobile/tests/management.test.ts
+@@ -1,4 +1,5 @@
+ import * as gymAppearanceModule from '../../lib/gym-appearance.ts';
++import * as sessionDeadlines from '../../lib/session-deadlines.ts';
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { DatabaseSync } from 'node:sqlite';
+@@ -55,7 +56,7 @@
+     }; } },
+     'expo-crypto': { CryptoDigestAlgorithm: { SHA256: 'SHA-256' }, digestStringAsync: async (_: unknown, value: string) => createHash('sha256').update(value).digest('hex'), digest: async (_: unknown, value: Uint8Array) => webcrypto.subtle.digest('SHA-256', new Uint8Array(value)), getRandomValues: webcrypto.getRandomValues.bind(webcrypto), randomUUID },
+     'expo-secure-store': { getItemAsync: async (key: string) => secure.get(key) || null, setItemAsync: async (key: string, value: string) => { secure.set(key, value); } },
+-    '../../lib/service': service, '../../lib/domain': domain, '../../lib/replication': replication, '../../lib/gym-appearance': gymAppearanceModule, '../../lib/offline-management': management, './credential-codec': codec, './http': { request: network, ApiError },
++    '../../lib/service': service, '../../lib/domain': domain, '../../lib/replication': replication, '../../lib/session-deadlines': sessionDeadlines, '../../lib/gym-appearance': gymAppearanceModule, '../../lib/offline-management': management, './credential-codec': codec, './http': { request: network, ApiError },
+   };
+   const exports: any = {};
+   runInNewContext(ts.transpileModule(readFileSync(new URL('../src/offline.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, require: (name: string) => { if (!(name in dependencies)) throw Error(name); return dependencies[name]; }, crypto: webcrypto, URL, Date, Uint8Array, atob, btoa, setTimeout, clearTimeout, setInterval: (callback: () => void, ms: number) => { assert.equal(ms, 10000); automatic.push(callback); return setInterval(callback, ms); }, clearInterval, console });
+@@ -89,13 +90,15 @@
+   const person = await call('people', 'POST', { name: 'Socio desconectado', document: 'OFFLINE-1', kind: 'member', status: 'active', phone: '59171234567' });
+   const plan = await call('pos/plans', 'POST', { name: 'Cinco sesiones', unit: 'sessions', duration: 5, price_cents: 5000 });
+   const product = await call('pos/products', 'POST', { name: 'Agua', price_cents: 500, cost_cents: 225, stock: 10, track_stock: true });
+-  const checkout = { request_id: randomUUID(), person_id: person.id, payment_method: 'cash', lines: [{ kind: 'plan', id: plan.id, quantity: 1 }, { kind: 'product', id: product.id, quantity: 2 }] };
++  const checkout = { request_id: randomUUID(), person_id: person.id, sessions_until: '2099-12-31', payment_method: 'cash', lines: [{ kind: 'plan', id: plan.id, quantity: 1 }, { kind: 'product', id: product.id, quantity: 2 }] };
+   const sale = await call('pos/checkout', 'POST', checkout);
+   const repeated = await call('pos/checkout', 'POST', checkout);
+   assert.equal(repeated.id, sale.id);
+   assert.ok(sale.credential?.id);
+   const card = await call('credentials/' + sale.credential.id + '/card');
+   assert.ok(card.code);
++  assert.equal(card.plan_name, 'Cinco sesiones');
++  assert.equal(sale.memberships[0].end_date, '2100-01-01');
+   const scan = await phone.request('access', 'POST', { code: card.code, direction: 'auto', request_id: randomUUID(), expected_actor_id: session.user!.id, expected_installation_id: session.installation_id });
+   assert.equal(scan.allowed, 1);
+   const photo = 'iVBORw0KGgo=';
+--- a/mobile/tests/offline.test.ts
++++ b/mobile/tests/offline.test.ts
+@@ -1,4 +1,5 @@
+ import * as gymAppearanceModule from '../../lib/gym-appearance.ts';
++import * as sessionDeadlines from '../../lib/session-deadlines.ts';
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { DatabaseSync } from 'node:sqlite';
+@@ -64,6 +65,7 @@
+       const sale = await pos.checkout({
+         request_id: randomUUID(),
+         person_id: person.id,
++        sessions_until: '2099-12-31',
+         payment_method: 'cash',
+         lines: [{ kind: 'plan', id: plan.id, quantity: 1 }],
+       });
+@@ -129,6 +131,7 @@
+         },
+       },
+       '../../lib/service': serviceModule,
++      '../../lib/session-deadlines': sessionDeadlines,
+       '../../lib/domain': domain,
+       '../../lib/replication': replication, '../../lib/gym-appearance': gymAppearanceModule,
+       '../../lib/offline-management': management,
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "gympass-control-acceso",
+-  "version": "5.3.0",
++  "version": "5.4.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "gympass-control-acceso",
+-      "version": "5.3.0",
++      "version": "5.4.0",
+       "dependencies": {
+         "lucide-react": "1.57.0",
+         "qrcode-generator": "2.0.4",
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "gympass-control-acceso",
+-  "version": "5.3.0",
++  "version": "5.4.0",
+   "private": true,
+   "engines": {
+     "node": ">=24.0.0"
+--- a/scripts/build-desktop.cjs
++++ b/scripts/build-desktop.cjs
+@@ -20,6 +20,10 @@
+ });
+ if (connector.status !== 0) process.exit(connector.status || 1);
+ writeFileSync(resolve(runtime, 'package.json'), JSON.stringify({ type: 'module', private: true, version }));
++for (const name of ['backup-worker.mjs', 'gym-member-counts-worker.mjs']) {
++  const source = readFileSync(resolve(root, 'server', name), 'utf8');
++  writeFileSync(resolve(runtime, 'server', name), source.replace(/(from\s+['"]\.\/[^'"]+)\.ts(['"])/g, '$1.js$2'));
++}
+ for (const [from, to] of [
+   ['dist', 'dist'],
+   ['server/migrations', 'server/migrations'],
+--- /dev/null
++++ b/server/backup-jobs.ts
+@@ -0,0 +1,22 @@
++import { Worker } from 'node:worker_threads';
++import { ApiError } from '../lib/service.ts';
++
++/** Hashing, SQLite verification and archive extraction must not block reception/cashier requests. */
++export function backupJob<T>(action: string, args: Record<string, unknown>): Promise<T> {
++  return new Promise((resolve, reject) => {
++    const worker = new Worker(new URL('./backup-worker.mjs', import.meta.url), {
++      workerData: { action, args }, resourceLimits: { maxOldGenerationSizeMb: 96 },
++      // V8, Passenger and node --test flags accepted by the parent are not valid worker flags.
++      execArgv: [],
++    });
++    let result: { error?: string; status?: number; value: T } | undefined;
++    worker.once('message', message => { result = message; });
++    worker.once('error', reject);
++    // SQLite statements may keep file handles alive until worker teardown, especially on Windows.
++    worker.once('exit', code => {
++      if (code !== 0 || !result) reject(new Error('El proceso de respaldo terminó sin confirmar el resultado (' + code + ').'));
++      else if (result.error) reject(new ApiError(result.status || 500, result.error));
++      else resolve(result.value);
++    });
++  });
++}
+--- a/server/backup-transfer.ts
++++ b/server/backup-transfer.ts
+@@ -1,6 +1,6 @@
+ import { createHash } from 'node:crypto';
+ import type { IncomingMessage } from 'node:http';
+-import { mkdtemp, open, rm } from 'node:fs/promises';
++import { mkdtemp, open, rm, statfs } from 'node:fs/promises';
+ import {
+   closeSync,
+   lstatSync,
+@@ -15,7 +15,8 @@
+ } from 'node:fs';
+ import { dirname, join, resolve, sep } from 'node:path';
+ import { ApiError } from '../lib/service.ts';
+-import { maxBackupTransferBytes } from '../lib/backup-limits.ts';
++import { maxBackupTransferBytes, maxBufferedBackupBytes, backupTransferLimitLabel } from '../lib/backup-limits.ts';
++import { fileChunks } from './file-chunks.ts';
+ import {
+   canonicalBackupFile,
+   inspectBackup,
+@@ -57,7 +58,7 @@
+     }));
+   const header = Buffer.from(JSON.stringify({ format: 1, manifest, entries }));
+   const size = magic.length + 4 + header.length + entries.reduce((sum, entry) => sum + entry.size, 0);
+-  if (header.length > maxHeaderBytes || size > maxBackupTransferBytes)
++  if (header.length > maxHeaderBytes || size > maxBufferedBackupBytes)
+     throw new ApiError(413, 'La copia supera el límite de exportación de 256 MiB.');
+   const length = Buffer.alloc(4);
+   length.writeUInt32BE(header.length);
+@@ -73,12 +74,36 @@
+   return { bytes: Buffer.concat(chunks, size), filename: id + '.gympassbackup' };
+ }
+ 
++/** The caller verifies the immutable copy in a worker before preparing this bounded stream. */
++export function streamBackupCopy(directory: string, id: string, maxSchema: number) {
++  const root = safeBackupDirectory(join(directory, id));
++  const manifest = validateBackupManifest(JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')), id, maxSchema);
++  const entries = Object.keys(manifest.files).sort().map(path => {
++    const info = lstatSync(join(root, ...canonicalBackupFile(path).split('/')));
++    if (!info.isFile() || info.isSymbolicLink()) throw new ApiError(409, 'El respaldo contiene un archivo inválido.');
++    return { path, size: info.size };
++  });
++  const header = Buffer.from(JSON.stringify({ format: 1, manifest, entries }));
++  const size = magic.length + 4 + header.length + entries.reduce((sum, entry) => sum + entry.size, 0);
++  if (header.length > maxHeaderBytes || size > maxBackupTransferBytes)
++    throw new ApiError(413, 'La copia supera el límite de transferencia de ' + backupTransferLimitLabel + '.');
++  const chunks = async function* () {
++    const length = Buffer.alloc(4);
++    length.writeUInt32BE(header.length);
++    yield magic; yield length; yield header;
++    for (const entry of entries) {
++      yield* fileChunks(join(root, ...entry.path.split('/')), entry.size, manifest.files[entry.path]);
++    }
++  };
++  return { chunks: chunks(), size, filename: id + '.gympassbackup' };
++}
++
+ export function importBackupCopy(
+   directory: string,
+   input: Uint8Array,
+   maxSchema: number,
+ ): ReturnType<typeof inspectBackup> {
+-  if (!(input instanceof Uint8Array) || input.byteLength > maxBackupTransferBytes)
++  if (!(input instanceof Uint8Array) || input.byteLength > maxBufferedBackupBytes)
+     throw new ApiError(413, 'La copia supera el límite de importación de 256 MiB.');
+   const bytes = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+   return importBackup(directory, bytes.length, (start, length) => bytes.subarray(start, start + length), maxSchema);
+@@ -87,7 +112,7 @@
+ export function importBackupFile(directory: string, file: string, maxSchema: number, owner: string) {
+   const info = lstatSync(file);
+   if (!info.isFile() || info.isSymbolicLink() || info.size > maxBackupTransferBytes)
+-    throw new ApiError(413, 'El archivo no es un respaldo de hasta 256 MiB.');
++    throw new ApiError(413, 'El archivo no es un respaldo de hasta ' + backupTransferLimitLabel + '.');
+   const source = openSync(file, 'r');
+   try {
+     return importBackup(directory, info.size, (position, length) => {
+@@ -196,8 +221,14 @@
+     throw new ApiError(415, 'Selecciona un archivo .gympassbackup.');
+   const declared = req.headers['content-length'];
+   if (declared && (Number(declared) > maxBackupTransferBytes || Number(declared) <= 0))
+-    throw new ApiError(413, 'El archivo debe contener un respaldo de hasta 256 MiB.');
++    throw new ApiError(413, 'El archivo debe contener un respaldo de hasta ' + backupTransferLimitLabel + '.');
+   const root = safeBackupDirectory(directory);
++  const ensureSpace = async (bytes: number) => {
++    const disk = await statfs(root);
++    if (disk.bavail * disk.bsize < bytes + 64 * 1024 * 1024)
++      throw new ApiError(507, 'No hay espacio suficiente para recibir y verificar el respaldo.');
++  };
++  await ensureSpace(declared ? Number(declared) * 2 : 64 * 1024 * 1024);
+   const temp = await mkdtemp(join(root, '.backup-upload-'));
+   try {
+     const path = join(temp, 'archive');
+@@ -206,7 +237,8 @@
+     try {
+       for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+         size += chunk.length;
+-        if (size > maxBackupTransferBytes) throw new ApiError(413, 'La copia supera el límite de 256 MiB.');
++        if (size > maxBackupTransferBytes) throw new ApiError(413, 'La copia supera el límite de ' + backupTransferLimitLabel + '.');
++        if (Math.floor(size / (16 * 1024 * 1024)) !== Math.floor((size - chunk.length) / (16 * 1024 * 1024))) await ensureSpace(size);
+         await file.writeFile(chunk);
+       }
+     } finally {
+@@ -214,6 +246,7 @@
+     }
+     if (!size || !req.complete || (declared && size !== Number(declared)))
+       throw new ApiError(400, 'El respaldo no se recibió completo.');
++    await ensureSpace(size);
+     return await consume(path);
+   } finally {
+     if (dirname(resolve(temp)) === root) await rm(temp, { recursive: true, force: true });
+--- /dev/null
++++ b/server/backup-worker.mjs
+@@ -0,0 +1,23 @@
++import { parentPort, workerData } from 'node:worker_threads';
++import { DatabaseSync } from 'node:sqlite';
++import { createBackup, inspectBackup } from './backups.ts';
++import { importBackupFile } from './backup-transfer.ts';
++import { capturePlatformBackup } from './platform-backup-job.ts';
++import { inspectPlatformExport } from './platform-backup-export.ts';
++
++const { action, args } = workerData;
++try {
++  let value;
++  if (action === 'inspect') value = inspectBackup(args.directory, args.id, args.maxSchema, args.owner);
++  else if (action === 'import') value = importBackupFile(args.directory, args.file, args.maxSchema, args.owner);
++  else if (action === 'inspect-platform') value = inspectPlatformExport(args.root, args.id);
++  else if (action === 'create') {
++    const raw = new DatabaseSync(args.source, { readOnly: true });
++    try { value = createBackup(raw, args.source, args.directory, args.kind); }
++    finally { raw.close(); }
++  } else if (action === 'platform') value = capturePlatformBackup(args.root, args.directory, args.sources);
++  else throw Error('Trabajo de respaldo no compatible.');
++  parentPort.postMessage({ value });
++} catch (error) {
++  parentPort.postMessage({ error: error.message, status: error.status });
++}
+--- a/server/backups.ts
++++ b/server/backups.ts
+@@ -21,6 +21,7 @@
+ import { ApiError } from '../lib/service.ts';
+ import { replaceFileSync } from './atomic-file.ts';
+ import { exportBackupCopy, importBackupCopy, importBackupFile, sameBackup } from './backup-transfer.ts';
++import { backupJob } from './backup-jobs.ts';
+ 
+ export const applicationVersion: string = JSON.parse(
+   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+@@ -47,7 +48,7 @@
+   kind: Kind;
+   files: Record<string, string>;
+ };
+-const digest = (path: string) => {
++export const digestBackupFile = (path: string) => {
+   const source = openSync(path, 'r');
+   const buffer = Buffer.allocUnsafe(128 * 1024);
+   const hash = createHash('sha256');
+@@ -59,6 +60,7 @@
+     closeSync(source);
+   }
+ };
++const digest = digestBackupFile;
+ function safeTree(root: string, relative = ''): string[] {
+   if (!relative) safeBackupDirectory(root);
+   const result: string[] = [];
+@@ -502,6 +504,19 @@
+       throw error;
+     }
+   }
++  async createAsync(kind: Kind = 'manual'): Promise<Manifest> {
++    try {
++      const result = await backupJob<Manifest>('create', { source: this.source, directory: this.directory, kind });
++      this.error = '';
++      return result;
++    } catch (error) { this.error = (error as Error).message; throw error; }
++  }
++  inspectAsync(id: string, owner?: string) {
++    return backupJob<ReturnType<typeof inspectBackup>>('inspect', { directory: this.directory, id, maxSchema: this.maxSchema(), owner });
++  }
++  importFileAsync(file: string, owner: string) {
++    return backupJob<ReturnType<typeof inspectBackup>>('import', { directory: this.directory, file, owner, maxSchema: this.maxSchema() });
++  }
+   check() {
+     const now = Date.now(),
+       config = this.settings(),
+@@ -565,6 +580,15 @@
+     });
+     return { preview, safety: safety.id };
+   }
++  async restoreAsync(id: string, owner: string, authorize: () => void) {
++    const preview = await this.inspectAsync(id, owner);
++    const safety = await this.createAsync('before-restore');
++    authorize();
++    atomicJson(join(dirname(this.source), 'restore-plan.json'), {
++      id, transaction: crypto.randomUUID(), directory: this.directory,
++    });
++    return { preview, safety: safety.id };
++  }
+   status() {
+     const copies = this.list();
+     return { settings: this.settings(), directory: this.directory, copies, last: copies[0] ?? null, error: this.error };
+--- /dev/null
++++ b/server/credential-shares.ts
+@@ -0,0 +1,176 @@
++import { createHash, randomBytes } from 'node:crypto';
++import type { IncomingMessage, ServerResponse } from 'node:http';
++import { mkdir, readdir, readFile, unlink, writeFile } from 'node:fs/promises';
++import { join } from 'node:path';
++import { ApiError, type Service } from '../lib/service.ts';
++import type { TenantContext } from './tenant-manager.ts';
++
++/** Un enlace de credencial deja de funcionar a los siete días. */
++export const shareLifetimeMs = 7 * 24 * 60 * 60 * 1000;
++const maxBytes = 3 * 1024 * 1024;
++const tokenPattern = /^[A-Za-z\d_-]{32}$/;
++const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
++
++type Share = { credential_id: string; expires_at: number; name: string };
++const keyOf = (token: string) => createHash('sha256').update(token).digest('hex');
++
++async function readPng(req: IncomingMessage) {
++  const chunks: Buffer[] = [];
++  let length = 0;
++  for await (const chunk of req) {
++    const bytes = Buffer.from(chunk);
++    length += bytes.length;
++    if (length > maxBytes) throw new ApiError(413, 'La imagen de la credencial es demasiado grande.');
++    chunks.push(bytes);
++  }
++  const bytes = Buffer.concat(chunks);
++  if (
++    req.headers['content-type']?.split(';')[0] !== 'image/png' ||
++    bytes.length < 33 ||
++    !bytes.subarray(0, 8).equals(pngSignature) ||
++    bytes.toString('ascii', 12, 16) !== 'IHDR'
++  )
++    throw new ApiError(415, 'Envía la credencial como una imagen PNG.');
++  const width = bytes.readUInt32BE(16),
++    height = bytes.readUInt32BE(20);
++  if (!width || !height || width > 2400 || height > 2400)
++    throw new ApiError(400, 'La imagen de la credencial tiene un tamaño inválido.');
++  return bytes;
++}
++
++async function readShare(directory: string, key: string): Promise<Share | null> {
++  try {
++    const share = JSON.parse(await readFile(join(directory, key + '.json'), 'utf8')) as Share;
++    return typeof share.credential_id === 'string' && typeof share.expires_at === 'number' ? share : null;
++  } catch {
++    return null;
++  }
++}
++
++async function removeShare(directory: string, key: string) {
++  await Promise.all(
++    [unlink(join(directory, key + '.png')), unlink(join(directory, key + '.json'))].map((work) => work.catch(() => {})),
++  );
++}
++
++/** Quita los enlaces vencidos y los anteriores de la misma credencial: solo queda uno vigente. */
++async function purge(directory: string, credentialId: string) {
++  const now = Date.now();
++  for (const file of await readdir(directory).catch(() => [])) {
++    if (!/^[a-f\d]{64}\.json$/.test(file)) continue;
++    const key = file.slice(0, -5);
++    const share = await readShare(directory, key);
++    if (!share || share.expires_at <= now || share.credential_id === credentialId) await removeShare(directory, key);
++  }
++}
++
++/**
++ * Guarda la imagen de una credencial y devuelve una dirección privada para compartirla. Exige el mismo
++ * permiso que descargar la tarjeta; el enlace solo sirve mientras la credencial siga activa.
++ */
++export async function createCredentialShare(
++  service: Service,
++  root: string,
++  gymId: string,
++  credentialId: string,
++  req: IncomingMessage,
++) {
++  const card = await service.credentialCard(credentialId);
++  const bytes = await readPng(req);
++  const directory = join(root, 'shares');
++  await mkdir(directory, { recursive: true });
++  await purge(directory, credentialId);
++  const token = randomBytes(24).toString('base64url');
++  const key = keyOf(token);
++  const expires_at = Date.now() + shareLifetimeMs;
++  await writeFile(join(directory, key + '.png'), bytes, { flag: 'wx' });
++  try {
++    await writeFile(
++      join(directory, key + '.json'),
++      JSON.stringify({
++        credential_id: credentialId,
++        expires_at,
++        name: String((card as Record<string, unknown>).name ?? ''),
++      } satisfies Share),
++      { flag: 'wx' },
++    );
++    await service.db.batch([service.audit('credential.shared', credentialId)]);
++  } catch (error) {
++    await removeShare(directory, key);
++    throw error;
++  }
++  return { path: `/c/${gymId}/${token}`, expires_at };
++}
++
++const escapeHtml = (value: string) =>
++  value.replace(
++    /[&<>"']/g,
++    (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!,
++  );
++
++function unavailable(res: ServerResponse, page: boolean) {
++  const headers = { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' };
++  if (!page) {
++    res.writeHead(404, { ...headers, 'Content-Type': 'text/plain; charset=utf-8' });
++    return res.end('No disponible.');
++  }
++  res.writeHead(404, { ...headers, 'Content-Type': 'text/html; charset=utf-8' });
++  res.end(
++    '<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
++      '<meta name="robots" content="noindex,nofollow"><title>Enlace no disponible</title>' +
++      '<body style="font:16px system-ui,sans-serif;display:grid;place-items:center;min-height:100dvh;margin:0;padding:24px;text-align:center">' +
++      '<p>Este enlace ya no está disponible. Pide a recepción que te envíe tu credencial de nuevo.</p></body></html>',
++  );
++}
++
++/**
++ * Entrega la credencial a quien tenga el enlace, sin iniciar sesión. La página incluye las etiquetas que
++ * WhatsApp usa para mostrar la tarjeta como vista previa dentro del chat.
++ */
++export async function serveCredentialShare(
++  req: IncomingMessage,
++  res: ServerResponse,
++  ctx: TenantContext,
++  gymId: string,
++  token: string,
++  image: boolean,
++  origin: string,
++) {
++  if (!tokenPattern.test(token)) return unavailable(res, !image);
++  const directory = join(ctx.root, 'shares');
++  const key = keyOf(token);
++  const share = await readShare(directory, key);
++  if (!share) return unavailable(res, !image);
++  const active =
++    share.expires_at > Date.now() &&
++    (await ctx.db.prepare('SELECT 1 FROM credentials WHERE id=? AND active=1').bind(share.credential_id).first());
++  if (!active) {
++    if (share.expires_at <= Date.now()) await removeShare(directory, key);
++    return unavailable(res, !image);
++  }
++  const headers = { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' };
++  if (image) {
++    const bytes = await readFile(join(directory, key + '.png')).catch(() => null);
++    if (!bytes) return unavailable(res, false);
++    res.writeHead(200, { ...headers, 'Content-Type': 'image/png', 'Content-Length': bytes.length });
++    return res.end(req.method === 'HEAD' ? undefined : bytes);
++  }
++  const organization = String(
++    (await ctx.db.prepare('SELECT name FROM settings WHERE id=1').first<{ name: string }>())?.name ?? '',
++  );
++  const picture = `${origin}/c/${gymId}/${token}.png`;
++  const title = 'Credencial de ' + share.name;
++  const description = 'Preséntala en recepción' + (organization ? ' de ' + organization : '') + '.';
++  const html =
++    `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
++    `<meta name="robots" content="noindex,nofollow"><title>${escapeHtml(title)}</title>` +
++    `<meta property="og:type" content="website"><meta property="og:title" content="${escapeHtml(title)}">` +
++    `<meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="${escapeHtml(picture)}">` +
++    `<meta property="og:image:type" content="image/png"><meta name="twitter:card" content="summary_large_image">` +
++    `<style>body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#14181d;color:#e6eaef;font:16px system-ui,sans-serif}` +
++    `main{padding:16px;text-align:center}img{display:block;width:min(92vw,400px);height:auto;border-radius:20px;margin:0 auto 16px}` +
++    `p{margin:0;color:#c5ccd5}</style></head><body><main><img src="${escapeHtml(picture)}" alt="${escapeHtml(title)}">` +
++    `<p>${escapeHtml(description)}</p></main></body></html>`;
++  res.writeHead(200, { ...headers, 'Content-Type': 'text/html; charset=utf-8' });
++  res.end(req.method === 'HEAD' ? undefined : html);
++}
+--- /dev/null
++++ b/server/file-chunks.ts
+@@ -0,0 +1,28 @@
++import { open } from 'node:fs/promises';
++import { createHash } from 'node:crypto';
++import { ApiError } from '../lib/service.ts';
++
++/** Close and verify a file before yielding its final chunk, so a completed download holds no file handles. */
++export async function* fileChunks(path: string, expectedSize?: number, expectedHash?: string) {
++  const source = await open(path, 'r');
++  const hash = expectedHash ? createHash('sha256') : undefined;
++  let pending: Buffer | undefined;
++  try {
++    const info = await source.stat();
++    const size = expectedSize ?? info.size;
++    if (!info.isFile() || info.size !== size) throw new ApiError(409, 'La copia cambió durante la descarga.');
++    for (let position = 0; position < size;) {
++      const bytes = Buffer.allocUnsafe(Math.min(64 * 1024, size - position));
++      const { bytesRead } = await source.read(bytes, 0, bytes.length, position);
++      if (!bytesRead) throw new ApiError(409, 'La copia está incompleta.');
++      position += bytesRead;
++      const chunk = bytes.subarray(0, bytesRead);
++      hash?.update(chunk);
++      if (pending) yield pending;
++      pending = chunk;
++    }
++    if ((await source.stat()).size !== size || (hash && hash.digest('hex') !== expectedHash))
++      throw new ApiError(409, 'La copia cambió durante la descarga.');
++  } finally { await source.close(); }
++  if (pending) yield pending;
++}
+--- /dev/null
++++ b/server/gym-member-counts-worker.mjs
+@@ -0,0 +1,4 @@
++import { parentPort, workerData } from 'node:worker_threads';
++import { readGymMemberCounts } from './gym-member-counts.ts';
++
++parentPort.postMessage(readGymMemberCounts(workerData.root, workerData.ids));
+--- /dev/null
++++ b/server/gym-member-counts.ts
+@@ -0,0 +1,66 @@
++import { Worker } from 'node:worker_threads';
++import { DatabaseSync } from 'node:sqlite';
++import { existsSync, lstatSync, readdirSync } from 'node:fs';
++import { join } from 'node:path';
++import { safeBackupDirectory } from './backups.ts';
++import { ApiError } from '../lib/service.ts';
++
++export type GymMemberCounts = Record<string, number | null>;
++
++/** Aggregate only: never create/migrate a gym database or load its member records. */
++export function readGymMemberCounts(root: string, ids: string[]): GymMemberCounts {
++  return Object.fromEntries(ids.map(id => {
++    let raw: DatabaseSync | undefined;
++    try {
++      if (!/^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(id)) throw Error('Gimnasio inválido.');
++      const directory = safeBackupDirectory(join(root, 'tenants', id));
++      if (!existsSync(directory)) return [id, null];
++      let file = join(directory, 'gympass.sqlite');
++      if (!existsSync(file)) {
++        const candidates = readdirSync(directory).filter(name => name.endsWith('.sqlite'));
++        if (candidates.length !== 1) return [id, null];
++        file = join(directory, candidates[0]);
++      }
++      const info = lstatSync(file);
++      if (!info.isFile() || info.isSymbolicLink()) return [id, null];
++      raw = new DatabaseSync(file, { readOnly: true });
++      raw.exec('PRAGMA query_only=ON; PRAGMA busy_timeout=250; PRAGMA cache_size=-512;');
++      if (raw.prepare('SELECT owner FROM settings WHERE id=1').get()?.owner !== id) return [id, null];
++      const count = Number(raw.prepare("SELECT COUNT(*) n FROM people WHERE kind='member' AND deleted_at IS NULL").get()!.n);
++      return [id, count];
++    } catch {
++      // An unavailable/corrupt gym must not hide the remaining counts or appear to have zero members.
++      return [id, null];
++    } finally { raw?.close(); }
++  }));
++}
++
++/** Share concurrent refreshes and allow at most one counting worker per platform process. */
++export function createGymMemberCounter(root: string) {
++  let pending: { key: string; result: Promise<GymMemberCounts> } | undefined;
++  return async (gyms: { id: string }[]): Promise<GymMemberCounts> => {
++    const ids = gyms.map(gym => gym.id).sort();
++    if (!ids.length) return {};
++    const key = ids.join(',');
++    while (pending) {
++      if (pending.key === key) return pending.result;
++      await pending.result.catch(() => {});
++    }
++    const result = new Promise<GymMemberCounts>((resolve, reject) => {
++      const worker = new Worker(new URL('./gym-member-counts-worker.mjs', import.meta.url), {
++        workerData: { root, ids }, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 64 },
++      });
++      const timer = setTimeout(() => { void worker.terminate(); }, 15000);
++      let counts: GymMemberCounts | undefined;
++      worker.once('message', result => { counts = result; });
++      worker.once('error', reject);
++      worker.once('exit', code => {
++        clearTimeout(timer);
++        if (code !== 0 || !counts) reject(new ApiError(503, 'No se pudieron consultar los totales de socios. Actualiza la lista para reintentar.'));
++        else resolve(counts);
++      });
++    });
++    pending = { key, result };
++    try { return await result; } finally { if (pending?.result === result) pending = undefined; }
++  };
++}
+--- /dev/null
++++ b/server/migrations/026_session_deadlines.sql
+@@ -0,0 +1,22 @@
++-- end_date es exclusivo para todos los planes. Los paquetes anteriores sin fecha
++-- conservan sus condiciones; las ventas nuevas exigen fecha límite en el servicio.
++DROP TRIGGER pos_one_plan;
++CREATE TRIGGER pos_one_plan BEFORE INSERT ON pos_memberships BEGIN
++ SELECT CASE WHEN EXISTS(
++  SELECT 1 FROM pos_memberships m
++  WHERE m.person_id=NEW.person_id AND m.status='active' AND m.id<>NEW.id
++   AND ((m.unit<>'sessions' AND m.end_date>NEW.start_date)
++     OR (m.unit='sessions' AND m.sessions_remaining>0 AND (m.end_date IS NULL OR m.end_date>NEW.start_date)))
++ ) THEN RAISE(ABORT,'POS_ACTIVE_PLAN') END;
++END;
++
++DROP TRIGGER pos_access_use;
++CREATE TRIGGER pos_access_use AFTER INSERT ON events
++WHEN NEW.allowed=1 AND NEW.direction='entry' AND NEW.zone_id='general' AND EXISTS(SELECT 1 FROM people WHERE id=NEW.person_id AND kind='member') BEGIN
++ INSERT INTO pos_membership_uses(event_id,membership_id)
++ SELECT NEW.id,id FROM pos_memberships WHERE person_id=NEW.person_id AND status='active' AND start_date<=NEW.local_date
++  AND ((unit<>'sessions' AND end_date>NEW.local_date)
++    OR (unit='sessions' AND sessions_remaining>0 AND (end_date IS NULL OR end_date>NEW.local_date)))
++ ORDER BY CASE WHEN unit='sessions' THEN 1 ELSE 0 END,created_at,rowid LIMIT 1;
++ UPDATE pos_memberships SET sessions_remaining=sessions_remaining-1 WHERE unit='sessions' AND id=(SELECT membership_id FROM pos_membership_uses WHERE event_id=NEW.id);
++END;
+--- a/server/platform-api.ts
++++ b/server/platform-api.ts
+@@ -73,6 +73,7 @@
+     secureCookies?: boolean;
+     trustedProxies?: string;
+     announced?: (gymIds: string[]) => void;
++    memberCounts?: (gyms: Gym[]) => Promise<Record<string, number | null>>;
+   },
+ ) {
+   const limitedLogin = createLoginLimiter(options.trustedProxies);
+@@ -167,6 +168,13 @@
+         send(res, { ok: true });
+       } else if (method === 'GET' && path === '/api/platform/gyms') {
+         send(res, { gyms: store.listGyms(actor, gymScope(url.searchParams)) });
++      } else if (method === 'GET' && path === '/api/platform/gym-member-counts') {
++        if (actor.global_role !== 'superadmin') throw new ApiError(403, 'Solo el superadministrador puede consultar los totales de socios.');
++        const gyms = store.listGyms(actor, gymScope(url.searchParams));
++        const counts = options.memberCounts ? await options.memberCounts(gyms) : {};
++        const current = await store.requireWebSession(value);
++        if (current.user.global_role !== 'superadmin') throw new ApiError(403, 'Solo el superadministrador puede consultar los totales de socios.');
++        send(res, { counts });
+       } else if (method === 'GET' && path === '/api/platform/billing') {
+         send(res, store.billing.summary(actor, url.searchParams.get('month') ?? ''));
+       } else if (method === 'POST' && path === '/api/platform/gyms') {
+--- a/server/platform-backup-export.ts
++++ b/server/platform-backup-export.ts
+@@ -1,122 +1,81 @@
+-import { createHash } from "node:crypto";
+-import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+-import { join, resolve, sep } from "node:path";
+-import { gzipSync } from "node:zlib";
+-import { ApiError } from "../lib/service.ts";
+-import { safeBackupDirectory } from "./backups.ts";
++import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
++import { join, resolve, sep } from 'node:path';
++import { ApiError } from '../lib/service.ts';
++import { maxBackupTransferBytes, backupTransferLimitLabel } from '../lib/backup-limits.ts';
++import { safeBackupDirectory, digestBackupFile } from './backups.ts';
++import { backupJob } from './backup-jobs.ts';
++import { fileChunks } from './file-chunks.ts';
+ 
+ const pattern = /^platform-\d{13}-[a-f\d-]{36}$/;
+ export function platformCopies(root: string) {
+-  const directory = safeBackupDirectory(join(root, "platform-backups"));
++  const directory = safeBackupDirectory(join(root, 'platform-backups'));
+   if (!existsSync(directory)) return [];
+-  return readdirSync(directory)
+-    .filter((id) => pattern.test(id))
+-    .flatMap((id) => {
+-      try {
+-        const path = safeBackupDirectory(join(directory, id));
+-        const manifest = JSON.parse(
+-          readFileSync(join(path, "complete.json"), "utf8"),
+-        );
+-        if (manifest.format !== 1 || !Number.isFinite(manifest.created_at))
+-          return [];
+-        return [{ id, created_at: manifest.created_at }];
+-      } catch {
+-        return [];
+-      }
+-    })
+-    .sort((a, b) => b.created_at - a.created_at);
++  return readdirSync(directory).filter(id => pattern.test(id)).flatMap(id => {
++    try {
++      const path = safeBackupDirectory(join(directory, id));
++      const manifest = JSON.parse(readFileSync(join(path, 'complete.json'), 'utf8'));
++      return manifest.format === 1 && Number.isFinite(manifest.created_at) ? [{ id, created_at: manifest.created_at }] : [];
++    } catch { return []; }
++  }).sort((a, b) => b.created_at - a.created_at);
+ }
+ 
+-/** A standard tar.gz can be extracted before using platform-restore.ts. */
+-export function exportPlatformCopy(root: string, id: string) {
+-  if (!pattern.test(id))
+-    throw new ApiError(400, "Respaldo de plataforma inválido.");
+-  const directory = safeBackupDirectory(join(root, "platform-backups", id));
+-  if (!existsSync(directory))
+-    throw new ApiError(404, "No se encontró el respaldo.");
+-  const manifestPath = join(directory, "complete.json");
+-  if (lstatSync(manifestPath).isSymbolicLink())
+-    throw new ApiError(409, "Respaldo inválido.");
+-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+-  if (
+-    manifest.format !== 1 ||
+-    !manifest.files ||
+-    !manifest.files["platform.sqlite"]
+-  )
+-    throw new ApiError(409, "La copia está incompleta.");
+-  const entries = [...Object.keys(manifest.files), "complete.json"];
+-  const chunks: Buffer[] = [];
+-  let total = 0;
+-  for (const file of entries) {
+-    if (
+-      file.includes("\\") ||
+-      file.startsWith("/") ||
+-      file.split("/").some((p) => !p || p === "." || p === "..") ||
+-      Buffer.byteLength(file) > 255
+-    )
+-      throw new ApiError(409, "El respaldo contiene una ruta inválida.");
++type Archive = { directory: string; filename: string; created_at: number; entries: { file: string; size: number; hash: string }[] };
++
++/** Verification runs in the backup worker before sending any archive bytes. */
++export function inspectPlatformExport(root: string, id: string): Archive {
++  if (!pattern.test(id)) throw new ApiError(400, 'Respaldo de plataforma inválido.');
++  const directory = safeBackupDirectory(join(root, 'platform-backups', id));
++  if (!existsSync(directory)) throw new ApiError(404, 'No se encontró el respaldo.');
++  const manifestPath = join(directory, 'complete.json');
++  const info = lstatSync(manifestPath);
++  if (!info.isFile() || info.isSymbolicLink() || info.size > 16 * 1024 * 1024) throw new ApiError(409, 'Manifiesto de respaldo inválido.');
++  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
++  if (manifest.format !== 1 || !manifest.files?.['platform.sqlite'] || !Number.isFinite(manifest.created_at))
++    throw new ApiError(409, 'La copia está incompleta.');
++  let total = 1024;
++  const entries = [...Object.keys(manifest.files), 'complete.json'].map(file => {
++    if (file.includes('\\') || file.startsWith('/') || file.split('/').some(p => !p || p === '.' || p === '..') || Buffer.byteLength(file) > 255)
++      throw new ApiError(409, 'El respaldo contiene una ruta inválida.');
+     const target = resolve(directory, file);
+-    if (!target.startsWith(directory + sep))
+-      throw new ApiError(409, "Ruta fuera del respaldo.");
+-    for (const part of file
+-      .split("/")
+-      .reduce<string[]>(
+-        (paths, part) => [...paths, join(paths.at(-1) || directory, part)],
+-        [],
+-      ))
+-      if (lstatSync(part).isSymbolicLink())
+-        throw new ApiError(409, "No se exportan enlaces.");
++    if (!target.startsWith(directory + sep)) throw new ApiError(409, 'Ruta fuera del respaldo.');
++    safeBackupDirectory(resolve(target, '..'));
+     const info = lstatSync(target);
+-    total += info.size;
+-    if (!info.isFile() || total > 256 * 1024 * 1024)
+-      throw new ApiError(
+-        413,
+-        "La copia supera el límite de descarga de 256 MiB.",
+-      );
+-    const bytes = readFileSync(target);
+-    if (
+-      file !== "complete.json" &&
+-      createHash("sha256").update(bytes).digest("hex") !== manifest.files[file]
+-    )
+-      throw new ApiError(
+-        409,
+-        "La copia está dañada o cambió durante la descarga.",
+-      );
+-    const header = Buffer.alloc(512);
+-    const split = file.length > 100 ? file.lastIndexOf("/") : -1;
+-    const name = split < 0 ? file : file.slice(split + 1),
+-      prefix = split < 0 ? "" : file.slice(0, split);
+-    if (Buffer.byteLength(name) > 100 || Buffer.byteLength(prefix) > 155)
+-      throw new ApiError(409, "Nombre de archivo demasiado largo.");
+-    header.write(name);
+-    header.write("0000600\0", 100);
+-    header.write("0000000\0", 108);
+-    header.write("0000000\0", 116);
+-    header.write(bytes.length.toString(8).padStart(11, "0") + "\0", 124);
+-    header.write(
+-      Math.floor(manifest.created_at / 1000)
+-        .toString(8)
+-        .padStart(11, "0") + "\0",
+-      136,
+-    );
+-    header.fill(32, 148, 156);
+-    header.write("0", 156);
+-    header.write("ustar\0", 257);
+-    header.write("00", 263);
+-    header.write(prefix, 345);
+-    header.write(
+-      [...header]
+-        .reduce((sum, byte) => sum + byte, 0)
+-        .toString(8)
+-        .padStart(6, "0") + "\0 ",
+-      148,
+-    );
+-    chunks.push(
+-      header,
+-      bytes,
+-      Buffer.alloc((512 - (bytes.length % 512)) % 512),
+-    );
+-  }
+-  chunks.push(Buffer.alloc(1024));
+-  return { filename: id + ".tar.gz", bytes: gzipSync(Buffer.concat(chunks)) };
++    if (!info.isFile() || info.isSymbolicLink()) throw new ApiError(409, 'No se exportan enlaces ni archivos especiales.');
++    total += 512 + Math.ceil(info.size / 512) * 512;
++    if (total > maxBackupTransferBytes) throw new ApiError(413, 'La copia supera el límite de ' + backupTransferLimitLabel + '.');
++    const split = Buffer.byteLength(file) > 100 ? file.lastIndexOf('/') : -1;
++    if (Buffer.byteLength(split < 0 ? file : file.slice(split + 1)) > 100 || Buffer.byteLength(split < 0 ? '' : file.slice(0, split)) > 155)
++      throw new ApiError(409, 'Nombre de archivo demasiado largo.');
++    const hash = digestBackupFile(target);
++    if (file !== 'complete.json' && hash !== manifest.files[file]) throw new ApiError(409, 'La copia está dañada o cambió durante la descarga.');
++    return { file, size: info.size, hash };
++  });
++  return { directory, filename: id + '.tar.gz', created_at: manifest.created_at, entries };
+ }
++
++function tarHeader(file: string, size: number, created: number) {
++  const header = Buffer.alloc(512);
++  const split = Buffer.byteLength(file) > 100 ? file.lastIndexOf('/') : -1;
++  header.write(split < 0 ? file : file.slice(split + 1));
++  header.write('0000600\0', 100); header.write('0000000\0', 108); header.write('0000000\0', 116);
++  header.write(size.toString(8).padStart(11, '0') + '\0', 124);
++  header.write(Math.floor(created / 1000).toString(8).padStart(11, '0') + '\0', 136);
++  header.fill(32, 148, 156); header.write('0', 156); header.write('ustar\0', 257); header.write('00', 263);
++  header.write(split < 0 ? '' : file.slice(0, split), 345);
++  header.write([...header].reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, '0') + '\0 ', 148);
++  return header;
++}
++
++/** Standard tar chunks; the HTTP sender applies streaming gzip without buffering the archive. */
++export async function exportPlatformCopy(root: string, id: string) {
++  const archive = await backupJob<Archive>('inspect-platform', { root, id });
++  const chunks = async function* () {
++    for (const entry of archive.entries) {
++      yield tarHeader(entry.file, entry.size, archive.created_at);
++      yield* fileChunks(join(archive.directory, entry.file), entry.size, entry.hash);
++      yield Buffer.alloc((512 - entry.size % 512) % 512);
++    }
++    yield Buffer.alloc(1024);
++  };
++  return { filename: archive.filename, chunks: chunks() };
++}
+--- /dev/null
++++ b/server/platform-backup-job.ts
+@@ -0,0 +1,70 @@
++import { DatabaseSync } from 'node:sqlite';
++import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
++import { join, relative, resolve, sep } from 'node:path';
++import { safeBackupDirectory, digestBackupFile } from './backups.ts';
++
++function files(root: string, prefix = ''): string[] {
++  return readdirSync(join(root, prefix)).flatMap(name => {
++    const file = prefix ? prefix + '/' + name : name;
++    const info = lstatSync(join(root, file));
++    if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) throw Error('No se respaldan enlaces ni archivos especiales.');
++    return info.isDirectory() ? files(root, file) : [file];
++  });
++}
++
++/** Runs off the HTTP thread. Only immutable backup copies are linked to each other, never live files. */
++export function capturePlatformBackup(root: string, directory: string, sources: { id: string; database: string }[]) {
++  const backupRoot = safeBackupDirectory(join(root, 'platform-backups'));
++  directory = safeBackupDirectory(directory);
++  if (!directory.startsWith(backupRoot + sep)) throw Error('Destino de respaldo inválido.');
++  const previous = readdirSync(backupRoot).filter(name => /^platform-\d{13}-[a-f\d-]{36}$/.test(name))
++    .filter(name => join(backupRoot, name) !== directory && existsSync(join(backupRoot, name, 'complete.json')))
++    .sort().at(-1);
++  let previousManifest: { files?: Record<string, string> } = {};
++  if (previous) {
++    try { previousManifest = JSON.parse(readFileSync(join(backupRoot, previous, 'complete.json'), 'utf8')); } catch { /* No reuse from an incomplete copy. */ }
++  }
++  const hashes: Record<string, string> = {};
++  for (const source of sources) {
++    if (!/^[a-f\d-]{36}$/.test(source.id)) throw Error('Gimnasio inválido.');
++    const sourceRoot = safeBackupDirectory(join(root, 'tenants', source.id));
++    if (resolve(source.database) !== join(sourceRoot, 'gympass.sqlite') &&
++      (!resolve(source.database).startsWith(sourceRoot + sep) || !source.database.endsWith('.sqlite')))
++      throw Error('Base fuera del gimnasio.');
++    const destination = join(directory, 'tenants', source.id);
++    mkdirSync(destination, { recursive: true });
++    const raw = new DatabaseSync(source.database, { readOnly: true });
++    try { raw.prepare('VACUUM INTO ?').run(join(destination, 'gympass.sqlite')); }
++    finally { raw.close(); }
++    for (const asset of ['credentials.key', 'photos', 'branding', 'backgrounds', 'tenant.json']) {
++      const path = join(sourceRoot, asset);
++      if (!existsSync(path)) continue;
++      const info = lstatSync(path);
++      if (info.isSymbolicLink()) throw Error('No se respaldan enlaces.');
++      const entries = info.isDirectory() ? files(sourceRoot, asset) : [asset];
++      for (const entry of entries) {
++        const name = 'tenants/' + source.id + '/' + entry;
++        const hash = digestBackupFile(join(sourceRoot, entry));
++        const target = join(directory, name);
++        mkdirSync(resolve(target, '..'), { recursive: true });
++        const old = previous ? join(backupRoot, previous, name) : '';
++        let linked = false;
++        if (old && previousManifest.files?.[name] === hash) {
++          try {
++            // Validate the old tree before following a candidate path.
++            safeBackupDirectory(resolve(old, '..'));
++            if (!lstatSync(old).isSymbolicLink() && digestBackupFile(old) === hash) {
++              linkSync(old, target);
++              linked = true;
++            }
++          } catch { /* Cross-device links or an unavailable old copy fall back to copying. */ }
++        }
++        if (!linked) cpSync(join(sourceRoot, entry), target, { errorOnExist: true, force: false });
++        hashes[name] = hash;
++      }
++    }
++  }
++  for (const file of files(directory)) hashes[file] ??= digestBackupFile(join(directory, file));
++  writeFileSync(join(directory, 'complete.json'), JSON.stringify({ format: 1, created_at: Date.now(), files: hashes }), { flag: 'wx', mode: 0o600 });
++  return { id: relative(backupRoot, directory), created_at: Date.now() };
++}
+--- a/server/platform-gym-api.ts
++++ b/server/platform-gym-api.ts
+@@ -4,6 +4,7 @@
+ import { InvitationBatches } from '../lib/invitation-batches.ts';
+ import { invitationBackground } from './invitation-backgrounds.ts';
+ import { loadMedia, saveMedia } from './media.ts';
++import { createCredentialShare } from './credential-shares.ts';
+ import { applicationVersion } from './backups.ts';
+ import { correctSessionTimes } from './session-corrections.ts';
+ import { verifyPassword } from './auth.ts';
+@@ -12,6 +13,30 @@
+ import { json, readJson } from './platform-http.ts';
+ import { authorizedDatabase } from './authorized-database.ts';
+ import { posRequest } from './pos-api.ts';
++import { streamBackupCopy } from './backup-transfer.ts';
++import { sendStream } from './stream-transfer.ts';
++import { backupJob } from './backup-jobs.ts';
++
++/** Download immutable copies without occupying the live gym's database queue. */
++export async function downloadGymBackup(
++  res: ServerResponse, manager: TenantManager, store: PlatformStore,
++  gym: { id: string; name: string }, id: string, userId: string, authorize: () => void,
++) {
++  return manager.withHeavyOperation(async () => {
++    const target = await manager.withTenant(gym, async ctx => {
++      authorize();
++      return { directory: ctx.backups.directory, maxSchema: Number(ctx.db.raw.prepare('SELECT MAX(version) n FROM schema_version').get()?.n || 0) };
++    });
++    await backupJob('inspect', { ...target, id, owner: gym.id });
++    authorize();
++    const copy = streamBackupCopy(target.directory, id, target.maxSchema);
++    store.audit(userId, 'backup.downloaded', gym.id, id);
++    await sendStream(res, copy.chunks, {
++      'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${copy.filename}"`,
++      'Content-Length': String(copy.size),
++    }, authorize);
++  });
++}
+ 
+ export async function gymBackupApi(req: IncomingMessage, res: ServerResponse, path: string[], ctx: TenantContext, user: import('./platform-store.ts').PlatformUser, store: PlatformStore, manager: TenantManager, reauthorize: () => void, body: Record<string, any> = {}) {
+   if (user.global_role !== 'superadmin') throw new ApiError(403, 'Los respaldos los administra exclusivamente el superadministrador.');
+@@ -23,24 +48,15 @@
+         const status = ctx.backups.status();
+         return send({ ...status, directory: undefined, settings: { ...status.settings, directory: undefined } });
+       }
+-      manager.verifyBackup(ctx, id);
+-      if (action === 'inspect') return send(ctx.backups.inspect(id));
+-      if (action === 'export') {
+-        const copy = ctx.backups.exportCopy(id);
+-        store.audit(user.id, 'backup.downloaded', ctx.id, id);
++      if (action === 'inspect') return manager.withHeavyOperation(async () => send(await ctx.backups.inspectAsync(id, ctx.id)));
++    }
++    if (method === 'POST' && !id) {
++      return manager.withHeavyOperation(async () => {
++        const copy = await ctx.backups.createAsync();
+         reauthorize();
+-        res.writeHead(200, {
+-          'Content-Type': 'application/octet-stream',
+-          'Content-Disposition': `attachment; filename="${copy.filename}"`,
+-          'Cache-Control': 'no-store',
+-        });
+-        return res.end(copy.bytes);
+-      }
+-    }
+-    if (method === 'POST' && !id) {
+-      const copy = ctx.backups.create();
+-      store.audit(user.id, 'backup.created', ctx.id, copy.id);
+-      return send(copy, 201);
++        store.audit(user.id, 'backup.created', ctx.id, copy.id);
++        return send(copy, 201);
++      });
+     }
+     if (method === 'POST' && action === 'restore') {
+       if (user.global_role !== 'superadmin')
+@@ -56,11 +72,18 @@
+       )
+         throw new ApiError(403, 'Confirma tu contraseña de superadministrador.');
+       reauthorize();
+-      manager.verifyBackup(ctx, id);
+-      const result = ctx.backups.restore(id);
+-      ctx.reload = true;
+-      store.audit(user.id, 'backup.restored', ctx.id, id);
+-      return send({ ...result, restart: false });
++      const authorizeRestore = () => {
++        reauthorize();
++        if (store.raw.prepare('SELECT password_hash FROM platform_users WHERE id=? AND active=1').get(user.id)?.password_hash !== owner.password_hash)
++          throw new ApiError(401, 'Las credenciales cambiaron. Inicia sesión de nuevo.');
++      };
++      return manager.withHeavyOperation(async () => {
++        const result = await ctx.backups.restoreAsync(id, ctx.id, authorizeRestore);
++        reauthorize();
++        ctx.reload = true;
++        store.audit(user.id, 'backup.restored', ctx.id, id);
++        return send({ ...result, restart: false });
++      });
+     }
+     throw new ApiError(400, 'Operación de respaldo no disponible en plataforma.');
+ }
+@@ -84,6 +107,7 @@
+     id = path[1],
+     action = path[2];
+   const imageUpload = method === 'PUT' && ((first === 'people' && action === 'photo') || first === 'branding');
++  const shareUpload = method === 'PUT' && first === 'credentials' && !!id && action === 'share';
+   const background = ['invitation-batches', 'visits'].includes(first) && !!id && action === 'background';
+   // Retired screens retain read-only historical access for reporting accounts.
+   const historical = ['attendance', 'workdays', 'payroll', 'periods', 'calendar', 'visits', 'invitation-batches', 'invitation-templates'].includes(first);
+@@ -92,7 +116,7 @@
+     s.requireReports();
+     if (method !== 'GET') throw new ApiError(410, 'Este módulo fue retirado. Sus datos históricos se conservan en modo de consulta.');
+   }
+-  const body = method === 'GET' || imageUpload ? {} : await readJson(req);
++  const body = method === 'GET' || imageUpload || shareUpload ? {} : await readJson(req);
+   reauthorize();
+   const send = (value: unknown, status = 200) => json(res, value, status);
+   if (first === 'kiosk') {
+@@ -127,6 +151,7 @@
+   };
+   if (background && method === 'GET')
+     return send(await invitationBackground(s, ctx.root, first as 'visits' | 'invitation-batches', id, req));
++  if (shareUpload) return send(await createCredentialShare(s, ctx.root, auth.gym.id, id, req));
+   if (imageUpload) return send(await saveMedia(s, ctx.root, req, first === 'people' ? id : undefined));
+   if (first === 'auth' && id === 'status' && method === 'GET') return send({ setupRequired: false, user: auth.actor });
+   if (first === 'system-info' && method === 'GET')
+--- a/server/platform.ts
++++ b/server/platform.ts
+@@ -6,7 +6,7 @@
+ import { PlatformStore } from './platform-store.ts';
+ import { createPlatformApi } from './platform-api.ts';
+ import { TenantManager } from './tenant-manager.ts';
+-import { gymApi, gymBackupApi } from './platform-gym-api.ts';
++import { gymApi, gymBackupApi, downloadGymBackup } from './platform-gym-api.ts';
+ import { ApiError, Service, hash } from '../lib/service.ts';
+ import { reasons } from '../lib/domain.ts';
+ import { json, cookieValue, requestToken, readJson } from './platform-http.ts';
+@@ -18,6 +18,9 @@
+ import { replicationApi } from './replication-api.ts';
+ import { applicationVersion } from './backups.ts';
+ import { withBackupUpload } from './backup-transfer.ts';
++import { serveCredentialShare } from './credential-shares.ts';
++import { sendStream } from './stream-transfer.ts';
++import { createGymMemberCounter } from './gym-member-counts.ts';
+ 
+ const root = fileURLToPath(new URL('../', import.meta.url));
+ type Options = {
+@@ -41,6 +44,7 @@
+   const unlock = acquirePlatformLock(tenants.root);
+   const store = new PlatformStore(options.dataDirectory);
+   const platformApi = createPlatformApi(store, {
++    memberCounts: createGymMemberCounter(tenants.root),
+     provisionGym: async (gym) => {
+       tenants.provision(gym);
+     },
+@@ -56,6 +60,16 @@
+   let backupUploadInProgress = false;
+   let realtime: ReturnType<typeof createRealtime> | undefined;
+   const server = createServer(async (req, res) => {
++    // Keep the former two-minute body deadline except for authenticated backup uploads.
++    let bodyTimer = setTimeout(() => { if (!req.complete) req.destroy(); }, 120000);
++    const clearBodyTimer = () => clearTimeout(bodyTimer);
++    req.once('end', clearBodyTimer);
++    res.once('finish', clearBodyTimer);
++    res.once('close', clearBodyTimer);
++    const allowBackupUpload = () => {
++      clearBodyTimer();
++      bodyTimer = setTimeout(() => { if (!req.complete) req.destroy(); }, 30 * 60000);
++    };
+     res.once('finish', () => {
+       if (res.statusCode >= 400 || ['GET', 'HEAD'].includes(req.method || 'GET')) return;
+       let route: string;
+@@ -88,6 +102,25 @@
+       const url = new URL(req.url || '/', 'http://localhost');
+       const method = req.method || 'GET';
+       const writing = !['GET', 'HEAD'].includes(method);
++      // Public credential links: no session, only an unguessable token that expires.
++      const shared = /^\/c\/([a-f\d-]{36})\/([A-Za-z\d_-]{32})(\.png)?$/i.exec(url.pathname);
++      if (shared && (method === 'GET' || method === 'HEAD')) {
++        const reply = async () => {
++          const gym = store.requireOperationalGym(shared[1]);
++          await tenants.withTenant(gym, (ctx) =>
++            serveCredentialShare(req, res, ctx, gym.id, shared[2], !!shared[3], origin || `http://${req.headers.host}`),
++          );
++        };
++        try {
++          await reply();
++        } catch {
++          if (!res.headersSent) {
++            res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
++            res.end('No disponible.');
++          }
++        }
++        return;
++      }
+       if (url.pathname.startsWith('/api/')) {
+         const expected = origin || `http://${req.headers.host}`;
+         if (writing) {
+@@ -118,12 +151,16 @@
+           const session = await store.requireWebSession(token);
+           if (session.user.global_role !== 'superadmin') throw new ApiError(403, 'Se requiere superadministrador.');
+           if (!platformBackup[1]) return json(res, { copies: platformCopies(tenants.root) });
+-          const copy = exportPlatformCopy(tenants.root, platformBackup[1]);
+-          const current = store.authenticateSync(token);
+-          if (!current || current.kioskGymId || current.user.global_role !== 'superadmin') throw new ApiError(401, 'Inicia sesión de nuevo.');
+-          store.audit(current.user.id, 'platform.backup_download', undefined, platformBackup[1]);
+-          res.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${copy.filename}"`, 'Cache-Control': 'no-store' });
+-          return res.end(copy.bytes);
++          return await tenants.withHeavyOperation(async () => {
++            const copy = await exportPlatformCopy(tenants.root, platformBackup[1]);
++            const authorize = () => {
++              const current = store.authenticateSync(token);
++              if (!current || current.mobileGymId || current.kioskGymId || current.user.global_role !== 'superadmin') throw new ApiError(401, 'Inicia sesión de nuevo.');
++            };
++            authorize();
++            store.audit(session.user.id, 'platform.backup_download', undefined, platformBackup[1]);
++            await sendStream(res, copy.chunks, { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="${copy.filename}"` }, authorize, 'archive-gzip');
++          });
+         }
+         if (url.pathname === '/api/platform/backups' && method === 'POST') {
+           const requestSession = requestToken(req);
+@@ -150,7 +187,8 @@
+               throw new ApiError(401, 'Las credenciales cambiaron. Inicia sesión de nuevo.');
+           };
+           authorize();
+-          const copy = await tenants.snapshotPlatform(store.raw, authorize);
++          const copy = await tenants.withHeavyOperation(() => tenants.snapshotPlatform(store.raw, authorize));
++          authorize();
+           store.audit(session.user.id, 'platform.backup', undefined, copy.id);
+           return json(res, copy, 201);
+         }
+@@ -171,15 +209,19 @@
+             return { gym, user: current.user };
+           };
+           const selected = authorize();
++          if (method === 'GET' && gymBackup[3] === 'export')
++            return await downloadGymBackup(res, tenants, store, selected.gym, gymBackup[2], selected.user.id, () => { authorize(); });
+           if (importing) {
++            allowBackupUpload();
+             if (backupUploadInProgress) throw new ApiError(429, 'Ya se está subiendo un respaldo.');
+             backupUploadInProgress = true;
+             try {
+-              const copy = await withBackupUpload(req, tenants.root, async file => await tenants.withTenant(selected.gym, async ctx => {
++              const copy = await tenants.withHeavyOperation(() => withBackupUpload(req, tenants.root, async file => await tenants.withTenant(selected.gym, async ctx => {
+                 const current = authorize(); if (res.destroyed) return;
+-                const copy = ctx.backups.importFile(file, ctx.id);
++                const copy = await ctx.backups.importFileAsync(file, ctx.id);
++                authorize();
+                 store.audit(current.user.id, 'backup.imported', ctx.id, copy.id); return copy;
+-              }));
++              })));
+               if (copy) return json(res, copy, 201); return;
+             } finally { backupUploadInProgress = false; }
+           }
+@@ -273,22 +315,33 @@
+           req.headers['x-gympass-support'] || (imageGet ? cookieValue(req, 'gympass_support') : '') || '',
+         );
+         const auth = await store.authorize(token, gymId, support, operationalWrite, kioskRoute);
++        if (method === 'GET' && path[0] === 'backups' && path[2] === 'export') {
++          const authorizeBackup = () => {
++            const current = store.authorizeSync(token, gymId, support);
++            if (current.user.global_role !== 'superadmin') throw new ApiError(403, 'Los respaldos los administra exclusivamente el superadministrador.');
++          };
++          authorizeBackup();
++          return await downloadGymBackup(res, tenants, store, auth.gym, path[1], auth.user.id, authorizeBackup);
++        }
+         if (method === 'POST' && path.join('/') === 'backups/import') {
+           if (auth.user.global_role !== 'superadmin') throw new ApiError(403, 'Solo el superadministrador puede importar un respaldo.');
++          allowBackupUpload();
+           if (backupUploadInProgress) throw new ApiError(429, 'Ya se está subiendo un respaldo. Inténtalo en unos instantes.');
+           backupUploadInProgress = true;
+           let copy;
+           try {
+-            copy = await withBackupUpload(req, tenants.root, async (file) =>
++            copy = await tenants.withHeavyOperation(() => withBackupUpload(req, tenants.root, async (file) =>
+               await tenants.withTenant(auth.gym, async (ctx) => {
+                 const current = store.authorizeSync(token, gymId, support, true);
+                 if (current.user.global_role !== 'superadmin') throw new ApiError(403, 'Solo el superadministrador puede importar un respaldo.');
+                 if (res.destroyed) return;
+-                const copy = ctx.backups.importFile(file, ctx.id);
++                const copy = await ctx.backups.importFileAsync(file, ctx.id);
++                const verified = store.authorizeSync(token, gymId, support, true);
++                if (verified.user.global_role !== 'superadmin') throw new ApiError(403, 'Solo el superadministrador puede importar un respaldo.');
+                 store.audit(current.user.id, 'backup.imported', gymId, copy.id);
+                 return copy;
+               }),
+-            );
++            ));
+           } finally {
+             backupUploadInProgress = false;
+           }
+@@ -348,10 +401,14 @@
+       res.end(content);
+     } catch (error) {
+       if (res.headersSent) {
+-        res.end();
+-        return;
+-      }
+-      if (error instanceof ApiError) return json(res, { error: error.message }, error.status);
++        // A failed stream must be visibly incomplete, never a successful truncated archive.
++        res.destroy();
++        return;
++      }
++      if (error instanceof ApiError) {
++        if (error.status === 429) res.setHeader('Retry-After', '5');
++        return json(res, { error: error.message }, error.status);
++      }
+       if (error instanceof ZodError)
+         return json(
+           res,
+@@ -366,7 +423,7 @@
+     }
+   });
+   realtime = createRealtime(server, store, origin);
+-  server.requestTimeout = 120000;
++  server.requestTimeout = 30 * 60000;
+   server.headersTimeout = 15000;
+   try {
+     await new Promise<void>((done, reject) => {
+@@ -390,7 +447,7 @@
+         new Date(),
+         (gym) => realtime?.publish(gym, ['access', 'alerts']),
+       )
+-      .then(() => tenants.automaticPlatformBackup(store.raw))
++      .then(() => tenants.withHeavyOperation(() => tenants.automaticPlatformBackup(store.raw)))
+       .catch((error) => console.error('Respaldo de plataforma:', error.message))
+       .finally(() => {
+         maintenanceWork = null;
+--- a/server/replication-api.ts
++++ b/server/replication-api.ts
+@@ -8,9 +8,11 @@
+   authorizeReplica,
+   pairReplica,
+   mergeReplica,
+-  replicaSnapshot,
++  replicaMetadata,
++  replicaRevision,
+   initializeReplication,
+ } from "./replication.ts";
++import { prepareReplicaSnapshot } from './replication-stream.ts';
+ 
+ export async function replicationApi(
+   req: IncomingMessage,
+@@ -146,8 +148,21 @@
+   await manager.withTenant(gym, async (ctx) => {
+     authorizeReplica(store, ctx, token);
+   });
+-  const body = method === "GET" ? {} : await readJson(req, 64 * 1024 * 1024);
+-  return manager.withTenant(gym, async (ctx) => {
++  const productCosts = req.headers['x-gympass-product-costs'] === '1';
++  if (action === 'snapshot' && method === 'GET') {
++    const unchanged = await manager.withTenant(gym, async ctx => {
++      const { device, auth } = authorizeReplica(store, ctx, token);
++      if (url.searchParams.get('revision') !== replicaRevision(ctx, device, productCosts)) return false;
++      const metadata = await replicaMetadata(ctx, device, auth, productCosts);
++      authorizeReplica(store, ctx, token);
++      json(res, { ...metadata, unchanged: true });
++      return true;
++    });
++    if (unchanged) return;
++  }
++  return manager.withHeavyOperation(async () => {
++    const body = method === "GET" ? {} : await readJson(req, 64 * 1024 * 1024);
++    const response = await manager.withTenant(gym, async (ctx) => {
+     const { device, auth } = authorizeReplica(store, ctx, token);
+     if (action === 'photo' && method === 'GET') {
+       const person = ctx.db.raw.prepare('SELECT photo_path FROM people WHERE id=? AND deleted_at IS NULL')
+@@ -161,19 +176,7 @@
+         data_uri: `data:image/${String(person.photo_path).endsWith('.webp') ? 'webp' : 'png'};base64,${bytes.toString('base64')}` });
+     }
+     if (action === "snapshot" && method === "GET") {
+-      const snapshot = await replicaSnapshot(ctx, device, auth, req.headers['x-gympass-product-costs'] === '1');
+-      authorizeReplica(store, ctx, token);
+-      if (url.searchParams.get("revision") === snapshot.revision)
+-        return json(res, {
+-          unchanged: true,
+-          revision: snapshot.revision,
+-          gym_id: snapshot.gym_id,
+-          installation_id: snapshot.installation_id,
+-          issued_at: snapshot.issued_at,
+-          expires_at: snapshot.expires_at,
+-          user: snapshot.user,
+-        });
+-      return json(res, snapshot);
++      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts);
+     }
+     if (action === "push" && method === "POST") {
+       const result = mergeReplica(ctx, device, auth, body as any);
+@@ -192,14 +195,11 @@
+               .get(change.after.request_key);
+             if (row) ids[String(change.after.id)] = Number(row.id);
+           }
+-      return json(res, {
+-        ...result,
+-        event_ids: ids,
+-        ...(result.status === "conflict"
+-          ? {}
+-          : { snapshot: await replicaSnapshot(ctx, device, auth, req.headers['x-gympass-product-costs'] === '1') }),
+-      });
++      if (result.status === 'conflict') return json(res, { ...result, event_ids: ids });
++      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts, { ...result, event_ids: ids });
+     }
+     throw new ApiError(404, "Operación de sincronización no disponible.");
++    });
++    if (typeof response === 'function') await response();
+   });
+ }
+--- /dev/null
++++ b/server/replication-stream.ts
+@@ -0,0 +1,144 @@
++import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
++import { dirname, join, resolve } from 'node:path';
++import { DatabaseSync } from 'node:sqlite';
++import { setImmediate } from 'node:timers/promises';
++import type { ServerResponse } from 'node:http';
++import type { TenantContext } from './tenant-manager.ts';
++import { ApiError } from '../lib/service.ts';
++import { legacyProductCostTable, type SyncRow, type SyncTable } from '../lib/replication.ts';
++import { authorizeReplica, replicaSchema, replicaMetadata } from './replication.ts';
++import type { PlatformStore } from './platform-store.ts';
++import { sendStream } from './stream-transfer.ts';
++import { fileChunks } from './file-chunks.ts';
++
++type Metadata = Awaited<ReturnType<typeof replicaMetadata>>;
++
++function mobileRow(name: string, row: SyncRow): SyncRow {
++  if (name === 'settings') return { ...row, recovery_hash: '' };
++  if (name === 'credentials') return { ...row, code_cipher: null };
++  if (name === 'pos_memberships') return { ...row, price_cents: 0 };
++  return row;
++}
++
++/** Keep the latest 10k events and the last allowed entry of each person/zone, directly in SQLite. */
++const mobileEvents = `SELECT * FROM events WHERE rowid IN (SELECT rowid FROM events ORDER BY rowid DESC LIMIT 10000)
++  OR (direction='entry' AND id IN (
++    SELECT (SELECT l.id FROM events l WHERE l.person_id IS k.person_id AND l.zone_id IS k.zone_id AND l.allowed=1
++      ORDER BY l.occurred_at DESC,l.id DESC LIMIT 1)
++    FROM (SELECT DISTINCT person_id,zone_id FROM events WHERE allowed=1) k)) ORDER BY rowid`;
++
++async function* assetFiles(root: string, name: string): AsyncGenerator<string> {
++  const path = join(root, name);
++  if (!existsSync(path)) return;
++  const info = lstatSync(path);
++  if (info.isSymbolicLink()) throw new ApiError(409, 'No se sincronizan enlaces de archivos.');
++  if (info.isDirectory()) for (const child of readdirSync(path).sort()) yield* assetFiles(root, name + '/' + child);
++  else if (info.isFile()) yield name;
++}
++
++async function* snapshotChunks(ctx: TenantContext, metadata: Metadata, productCosts: boolean) {
++  const management = metadata.kind === 'desktop' || metadata.scope === 'management';
++  const schema = replicaSchema(ctx.db.raw, management ? 'desktop' : 'mobile');
++  const triggers = ctx.db.raw.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name NOT LIKE 'sync_%' ORDER BY name").all().map(row => row.sql);
++  yield JSON.stringify(metadata).slice(0, -1) + ',"triggers":' + JSON.stringify(triggers) + ',"tables":[';
++  let firstTable = true;
++  for (const original of schema) {
++    const table = productCosts ? original : legacyProductCostTable(original);
++    yield (firstTable ? '' : ',') + JSON.stringify({ ...table, rows: undefined }).slice(0, -1) + ',"rows":[';
++    firstTable = false;
++    let batch = '', firstRow = true, count = 0;
++    const query = !management && original.name === 'events' ? mobileEvents : `SELECT * FROM "${original.name}" ORDER BY rowid`;
++    for (const value of ctx.db.raw.prepare(query).iterate()) {
++      let row = management ? value as SyncRow : mobileRow(original.name, value as SyncRow);
++      if (!productCosts && ['pos_products', 'pos_sale_lines'].includes(original.name)) {
++        const { cost_cents: _cost, ...compatible } = row;
++        row = compatible;
++      }
++      batch += (firstRow ? '' : ',') + JSON.stringify(row);
++      firstRow = false;
++      if (++count % 128 === 0 || batch.length >= 32768) {
++        yield batch;
++        batch = '';
++        await setImmediate();
++      }
++    }
++    if (batch) yield batch;
++    yield ']}';
++    await setImmediate();
++  }
++  yield ']';
++  if (management) {
++    yield ',"assets":{';
++    let first = true;
++    for (const name of ['credentials.key', 'photos', 'branding', 'backgrounds']) {
++      for await (const file of assetFiles(ctx.root, name)) {
++        yield (first ? '' : ',') + JSON.stringify(file) + ':"';
++        first = false;
++        // Each non-final chunk is a multiple of three bytes, so concatenated base64 remains valid.
++        let remainder = Buffer.alloc(0);
++        for await (const chunk of fileChunks(join(ctx.root, file))) {
++          const bytes = remainder.length ? Buffer.concat([remainder, chunk]) : chunk as Buffer;
++          const complete = bytes.length - bytes.length % 3;
++          yield bytes.subarray(0, complete).toString('base64');
++          remainder = Buffer.from(bytes.subarray(complete));
++        }
++        if (remainder.length) yield remainder.toString('base64');
++        yield '"';
++      }
++    }
++    yield '}';
++  }
++  yield '}';
++}
++
++/** Preserves protocol 1: installed Android and Windows clients need no update. */
++export async function sendReplicaSnapshot(
++  ctx: TenantContext, res: ServerResponse, metadata: Metadata, productCosts: boolean,
++  authorize: () => void, envelope?: Record<string, unknown>,
++) {
++  const chunks = async function* () {
++    if (envelope) yield JSON.stringify(envelope).slice(0, -1) + ',"snapshot":';
++    yield* snapshotChunks(ctx, metadata, productCosts);
++    if (envelope) yield '}';
++  };
++  await sendStream(res, chunks(), { 'Content-Type': 'application/json; charset=utf-8' }, authorize, true);
++}
++
++/** Pin a WAL read transaction and immutable assets, then release the gym queue before network I/O. */
++export async function prepareReplicaSnapshot(
++  ctx: TenantContext, res: ServerResponse, device: Parameters<typeof replicaMetadata>[1],
++  auth: Parameters<typeof replicaMetadata>[2], store: PlatformStore, token: string,
++  productCosts: boolean, envelope?: Record<string, unknown>,
++) {
++  const metadata = await replicaMetadata(ctx, device, auth, productCosts);
++  const file = ctx.db.raw.location()!;
++  const reader = new DatabaseSync(file, { readOnly: true });
++  let authorization: DatabaseSync | undefined;
++  let frozen: string | undefined;
++  const dispose = () => {
++    reader.close(); authorization?.close();
++    if (frozen && dirname(resolve(frozen)) === resolve(ctx.root)) rmSync(frozen, { recursive: true, force: true });
++  };
++  try {
++    reader.exec('BEGIN');
++    reader.prepare('SELECT version FROM sync_revision WHERE id=1').get();
++    authorization = new DatabaseSync(file, { readOnly: true });
++    const authorizeContext = { ...ctx, db: { raw: authorization } as TenantContext['db'] };
++    if (metadata.kind === 'desktop' || metadata.scope === 'management') {
++      frozen = mkdtempSync(join(ctx.root, '.sync-transfer-'));
++      for (const name of ['credentials.key', 'photos', 'branding', 'backgrounds'])
++        for await (const asset of assetFiles(ctx.root, name)) {
++          const target = join(frozen, asset);
++          mkdirSync(dirname(target), { recursive: true });
++          try { linkSync(join(ctx.root, asset), target); }
++          catch { cpSync(join(ctx.root, asset), target, { errorOnExist: true, force: false }); }
++        }
++    }
++    const snapshotContext = { ...ctx, root: frozen || ctx.root, db: { raw: reader } as TenantContext['db'] };
++    return async () => {
++      try {
++        await sendReplicaSnapshot(snapshotContext, res, metadata, productCosts, () => { authorizeReplica(store, authorizeContext, token, false); }, envelope);
++      } finally { dispose(); }
++    };
++  } catch (error) { dispose(); throw error; }
++}
+--- a/server/replication.ts
++++ b/server/replication.ts
+@@ -26,6 +26,7 @@
+ } from "../lib/replication.ts";
+ import type { TenantContext } from "./tenant-manager.ts";
+ import type { PlatformStore, GymAuthorization } from "./platform-store.ts";
++import { replaceFileSync } from './atomic-file.ts';
+ 
+ type Device = {
+   id: string;
+@@ -40,7 +41,16 @@
+ const digest = (value: string | Uint8Array) =>
+   createHash("sha256").update(value).digest("hex");
+ const lease = 7 * 86400000;
++function replaceAsset(path: string, bytes: Uint8Array) {
++  const temporary = path + '.' + crypto.randomUUID() + '.tmp';
++  try {
++    writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o600 });
++    replaceFileSync(temporary, path);
++  } finally { if (existsSync(temporary)) unlinkSync(temporary); }
++}
++const initialized = new WeakSet<DatabaseSync>();
+ export function initializeReplication(raw: DatabaseSync) {
++  if (initialized.has(raw)) return;
+   raw.exec(`CREATE TABLE IF NOT EXISTS sync_devices(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN('desktop','mobile')),token_hash TEXT NOT NULL UNIQUE,password_revision TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,last_sync_at INTEGER,revoked_at INTEGER);
+     CREATE TABLE IF NOT EXISTS sync_batches(device_id TEXT NOT NULL,batch_id TEXT NOT NULL,payload_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN('applied','conflict','archived')),conflict TEXT,patch_json TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(device_id,batch_id));
+     CREATE TABLE IF NOT EXISTS sync_leases(device_id TEXT NOT NULL,revision TEXT NOT NULL,issued_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(device_id,revision,issued_at));`);
+@@ -52,13 +62,22 @@
+     raw.exec("ALTER TABLE sync_devices ADD COLUMN password_revision TEXT");
+   if (!(raw.prepare("PRAGMA table_info(sync_devices)").all() as any[]).some(column => column.name === "management"))
+     raw.exec("ALTER TABLE sync_devices ADD COLUMN management INTEGER NOT NULL DEFAULT 0 CHECK(management IN(0,1))");
++  // Only business changes invalidate a copy. Renewing device grants must not do so.
++  raw.exec(`CREATE TABLE IF NOT EXISTS sync_revision(id INTEGER PRIMARY KEY CHECK(id=1),epoch TEXT NOT NULL,version INTEGER NOT NULL);
++    INSERT OR IGNORE INTO sync_revision VALUES(1,'${crypto.randomUUID()}',0);`);
++  for (const table of syncTables)
++    for (const action of ['INSERT', 'UPDATE', 'DELETE'])
++      raw.exec(`CREATE TRIGGER IF NOT EXISTS sync_revision_${table}_${action} AFTER ${action} ON "${table}"
++        BEGIN UPDATE sync_revision SET version=version+1 WHERE id=1; END;`);
++  initialized.add(raw);
+ }
+ export function authorizeReplica(
+   store: PlatformStore,
+   ctx: TenantContext,
+   token: string,
++  initialize = true,
+ ): { device: Device; auth: GymAuthorization } {
+-  initializeReplication(ctx.db.raw);
++  if (initialize) initializeReplication(ctx.db.raw);
+   const device = ctx.db.raw
+     .prepare(
+       "SELECT * FROM sync_devices WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?",
+@@ -184,6 +203,55 @@
+       return { name, columns, rows, ...(kind === "desktop" ? { sql: String(raw.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name)!.sql) } : {}) };
+     });
+ }
++
++/** Schema inspection must never load history when validating a small incoming patch. */
++export function replicaSchema(raw: DatabaseSync, kind: 'desktop' | 'mobile'): SyncTable[] {
++  return syncTables.filter(name => kind === 'desktop' || mobileSyncTables.has(name)).map(name => ({
++    name,
++    columns: (raw.prepare(`PRAGMA table_info("${name}")`).all() as any[]).map(({ name, type, pk }) => ({ name, type, pk })),
++    rows: [],
++    ...(kind === 'desktop' ? { sql: String(raw.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name)!.sql) } : {}),
++  }));
++}
++
++/** Hash file metadata, never the photo contents, when checking an existing revision. */
++export function replicaRevision(ctx: TenantContext, device: Device, productCosts = true) {
++  initializeReplication(ctx.db.raw);
++  const files: unknown[] = [];
++  const walk = (name: string) => {
++    const path = join(ctx.root, name);
++    if (!existsSync(path)) return;
++    const info = lstatSync(path);
++    if (info.isSymbolicLink()) throw new ApiError(409, 'No se sincronizan enlaces de archivos.');
++    if (info.isDirectory()) for (const child of readdirSync(path).sort()) walk(name + '/' + child);
++    else files.push([name, info.size, info.mtimeMs]);
++  };
++  if (device.kind === 'desktop' || device.management)
++    for (const name of ['credentials.key', 'photos', 'branding', 'backgrounds']) walk(name);
++  return digest(JSON.stringify([
++    ctx.db.raw.prepare('SELECT epoch,version FROM sync_revision WHERE id=1').get(),
++    ctx.db.raw.prepare('PRAGMA schema_version').get(),
++    device.kind, !!device.management, productCosts, files,
++  ]));
++}
++
++export async function replicaMetadata(ctx: TenantContext, device: Device, auth: GymAuthorization, productCosts = true) {
++  const revision = replicaRevision(ctx, device, productCosts);
++  const now = Date.now();
++  const previous = ctx.db.raw.prepare(
++    'SELECT issued_at FROM sync_leases WHERE device_id=? AND revision=? AND expires_at>? ORDER BY issued_at DESC LIMIT 1',
++  ).get(device.id, revision, now + 6 * 86400000) as { issued_at: number } | undefined;
++  const issued = previous ? Number(previous.issued_at) : now;
++  ctx.db.raw.prepare('UPDATE sync_devices SET last_sync_at=?,expires_at=? WHERE id=?').run(now, now + 90 * 86400000, device.id);
++  ctx.db.raw.prepare('INSERT OR REPLACE INTO sync_leases VALUES(?,?,?,?)').run(device.id, revision, issued, issued + lease);
++  ctx.db.raw.prepare('DELETE FROM sync_leases WHERE expires_at<?').run(now);
++  return {
++    protocol: 1 as const, gym_id: ctx.id, installation_id: await hash(ctx.id), revision,
++    issued_at: issued, expires_at: issued + lease, kind: device.kind,
++    ...(device.management ? { scope: 'management' as const } : {}),
++    user: { ...auth.actor, role: auth.actor.role as 'admin' | 'operator' },
++  };
++}
+ export function replicaAssets(root: string) {
+   const assets: Record<string, string> = {};
+   const walk = (name: string) => {
+@@ -208,6 +276,7 @@
+   auth: GymAuthorization,
+   productCosts = true,
+ ): Promise<SyncSnapshot> {
++  const metadata = await replicaMetadata(ctx, device, auth, productCosts);
+   const currentTables = replicaTables(ctx.db.raw, device.management ? "desktop" : device.kind);
+   const tables = productCosts ? currentTables : currentTables.map(legacyProductCostTable);
+   const assets =
+@@ -219,32 +288,8 @@
+       )
+       .all() as any[]
+   ).map((row) => String(row.sql));
+-  const revision = digest(JSON.stringify([tables, assets]));
+-  const now = Date.now();
+-  const previous = ctx.db.raw
+-    .prepare(
+-      "SELECT issued_at FROM sync_leases WHERE device_id=? AND revision=? AND expires_at>? ORDER BY issued_at DESC LIMIT 1",
+-    )
+-    .get(device.id, revision, now + 6 * 86400000) as
+-    { issued_at: number } | undefined;
+-  const issued = previous ? Number(previous.issued_at) : now;
+-  ctx.db.raw
+-    .prepare("UPDATE sync_devices SET last_sync_at=?,expires_at=? WHERE id=?")
+-    .run(now, now + 90 * 86400000, device.id);
+-  ctx.db.raw
+-    .prepare("INSERT OR REPLACE INTO sync_leases VALUES(?,?,?,?)")
+-    .run(device.id, revision, issued, issued + lease);
+-  ctx.db.raw.prepare("DELETE FROM sync_leases WHERE expires_at<?").run(now);
+   return {
+-    protocol: 1,
+-    gym_id: ctx.id,
+-    installation_id: await hash(ctx.id),
+-    revision,
+-    issued_at: issued,
+-    expires_at: issued + lease,
+-    kind: device.kind,
+-    ...(device.management ? { scope: "management" as const } : {}),
+-    user: { ...auth.actor, role: auth.actor.role as "admin" | "operator" },
++    ...metadata,
+     tables,
+     triggers,
+     ...(assets ? { assets } : {}),
+@@ -352,7 +397,7 @@
+       );
+     return { status: "conflict", conflict: message };
+   }
+-  const schema = replicaTables(raw, device.management ? "desktop" : device.kind);
++  const schema = replicaSchema(raw, device.management ? "desktop" : device.kind);
+   const seen = new Set<string>();
+   for (const change of patch.changes) {
+     const table = schema.find((t) => t.name === change.table),
+@@ -564,12 +609,15 @@
+     }
+     validateMergedReplica(raw, patch, device, eventIds);
+     for (const trigger of triggers) raw.exec(trigger.sql);
++    // Merge suppresses business triggers to avoid replaying side effects. Invalidate once explicitly.
++    raw.prepare('UPDATE sync_revision SET version=version+1 WHERE id=1').run();
+     if (raw.prepare("PRAGMA foreign_key_check").all().length)
+       conflict("Los cambios contienen referencias que ya no existen.");
+     for (const asset of assets) {
+       if (asset.bytes) {
+         mkdirSync(dirname(asset.path), { recursive: true });
+-        writeFileSync(asset.path, asset.bytes);
++        // Replace the inode so a streaming snapshot's pinned asset cannot be modified in place.
++        replaceAsset(asset.path, asset.bytes);
+       } else if (existsSync(asset.path)) unlinkSync(asset.path);
+     }
+     raw
+@@ -587,7 +635,7 @@
+   } catch (error) {
+     raw.exec("ROLLBACK");
+     for (const asset of assets) {
+-      if (asset.previous) writeFileSync(asset.path, asset.previous);
++      if (asset.previous) replaceAsset(asset.path, asset.previous);
+       else if (existsSync(asset.path)) unlinkSync(asset.path);
+     }
+     if (
+@@ -728,10 +776,11 @@
+       if (person.kind === "member") {
+         const membership = raw
+           .prepare(
+-            "SELECT 1 FROM pos_memberships WHERE person_id=? AND status='active' AND start_date<=? AND ((unit<>'sessions' AND end_date>?) OR unit='sessions' AND (sessions_remaining>0 OR EXISTS(SELECT 1 FROM pos_membership_uses u WHERE u.membership_id=pos_memberships.id AND u.event_id=?)))",
++            "SELECT 1 FROM pos_memberships WHERE person_id=? AND status='active' AND start_date<=? AND ((unit<>'sessions' AND end_date>?) OR unit='sessions' AND (end_date IS NULL OR end_date>?) AND (sessions_remaining>0 OR EXISTS(SELECT 1 FROM pos_membership_uses u WHERE u.membership_id=pos_memberships.id AND u.event_id=?)))",
+           )
+           .get(
+             person.id,
++            event.local_date,
+             event.local_date,
+             event.local_date,
+             eventIds.get(Number(event.id))!,
+@@ -758,13 +807,11 @@
+     if (membership.status !== "active") continue;
+     const overlap = raw
+       .prepare(
+-        "SELECT 1 FROM pos_memberships WHERE person_id=? AND id<>? AND status='active' AND ((unit='sessions' AND sessions_remaining>0) OR (?='sessions' AND ?>0) OR (start_date<? AND end_date>?)) LIMIT 1",
++        "SELECT 1 FROM pos_memberships WHERE person_id=? AND id<>? AND status='active' AND (unit<>'sessions' OR sessions_remaining>0) AND start_date<? AND COALESCE(end_date,'9999-12-31')>? LIMIT 1",
+       )
+       .get(
+         membership.person_id,
+         membership.id,
+-        membership.unit,
+-        membership.sessions_remaining || 0,
+         membership.end_date || "9999-12-31",
+         membership.start_date,
+       );
+--- /dev/null
++++ b/server/stream-transfer.ts
+@@ -0,0 +1,34 @@
++import type { ServerResponse } from 'node:http';
++import { Readable } from 'node:stream';
++import { pipeline } from 'node:stream/promises';
++import { createBrotliCompress, createGzip, constants } from 'node:zlib';
++
++/** Backpressure bounds buffers even if the client downloads slowly. Compression uses the thread pool. */
++export async function sendStream(
++  res: ServerResponse, chunks: AsyncIterable<string | Uint8Array>,
++  headers: Record<string, string>, authorize: () => void, compress: boolean | 'archive-gzip' = false,
++) {
++  authorize();
++  const allowed = String(res.req?.headers['accept-encoding'] || '').split(',').map(item => {
++    const [name, ...params] = item.trim().split(';');
++    return params.some(param => /^\s*q=0(?:\.0*)?\s*$/.test(param)) ? '' : name;
++  });
++  const encoding = compress === true ? ['br', 'gzip'].find(name => allowed.includes(name)) : undefined;
++  if (compress === true) headers.Vary = 'Accept-Encoding';
++  if (encoding) headers['Content-Encoding'] = encoding;
++  res.writeHead(200, { 'Cache-Control': 'no-store', ...headers });
++  const guarded = async function* () {
++    for await (const chunk of chunks) {
++      if (res.destroyed) return;
++      authorize();
++      yield chunk;
++    }
++  };
++  const source = Readable.from(guarded(), { objectMode: false, highWaterMark: 64 * 1024 });
++  const options = { signal: AbortSignal.timeout(compress === true ? 120000 : 30 * 60000) };
++  if (compress === 'archive-gzip') await pipeline(source, createGzip({ level: 4 }), res, options);
++  else if (encoding === 'br')
++    await pipeline(source, createBrotliCompress({ params: { [constants.BROTLI_PARAM_QUALITY]: 4 } }), res, options);
++  else if (encoding === 'gzip') await pipeline(source, createGzip({ level: 4 }), res, options);
++  else await pipeline(source, res, options);
++}
+--- a/server/tenant-manager.ts
++++ b/server/tenant-manager.ts
+@@ -4,19 +4,18 @@
+   existsSync,
+   readFileSync,
+   writeFileSync,
+-  cpSync,
+   readdirSync,
+   lstatSync,
+   rmSync,
+   renameSync,
+ } from 'node:fs';
+-import { createHash } from 'node:crypto';
+ import { resolve, join, sep } from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import { SqliteDatabase } from './database.ts';
+ import { Backups, prepareDataStartup, safeBackupDirectory } from './backups.ts';
+ import { credentialVault } from './credential-vault.ts';
+ import { ApiError, Service, type CredentialCodec } from '../lib/service.ts';
++import { backupJob } from './backup-jobs.ts';
+ 
+ type Tenant = { id: string; name: string };
+ export type TenantContext = {
+@@ -29,20 +28,6 @@
+   touched: number;
+ };
+ const migrations = fileURLToPath(new URL('./migrations', import.meta.url));
+-function treeFiles(directory: string, prefix = ''): string[] {
+-  const result: string[] = [];
+-  for (const entry of readdirSync(directory)) {
+-    const path = join(directory, entry),
+-      info = lstatSync(path),
+-      name = prefix + entry;
+-    if (info.isSymbolicLink()) throw new ApiError(409, 'No se admiten enlaces de archivos en una copia de plataforma.');
+-    if (info.isDirectory()) result.push(...treeFiles(path, name + '/'));
+-    else if (info.isFile()) result.push(name);
+-    else throw new ApiError(409, 'La copia contiene un archivo no compatible.');
+-  }
+-  return result;
+-}
+-
+ export class TenantManager {
+   root: string;
+   private contexts = new Map<string, TenantContext>();
+@@ -50,6 +35,25 @@
+   private maxOpen: number;
+   private closed = false;
+   private gate: Promise<void> = Promise.resolve();
++  private heavyOperation = false;
++  private heavyReleased: Promise<void> = Promise.resolve();
++  private releaseHeavy: (() => void) | undefined;
++  private heavyWaiters = 0;
++
++  /** Reserve before reading a large body; one tenant cannot fill RAM with parallel transfers. */
++  async withHeavyOperation<T>(operation: () => Promise<T>): Promise<T> {
++    if (this.heavyOperation && this.heavyWaiters < 4) {
++      this.heavyWaiters++;
++      let timer: ReturnType<typeof setTimeout> | undefined;
++      try {
++        await Promise.race([this.heavyReleased, new Promise<void>(done => { timer = setTimeout(done, 100); })]);
++      } finally { if (timer) clearTimeout(timer); this.heavyWaiters--; }
++    }
++    if (this.heavyOperation) throw new ApiError(429, 'Hay una transferencia grande en curso. Reintenta en unos segundos.');
++    this.heavyOperation = true;
++    this.heavyReleased = new Promise<void>(done => { this.releaseHeavy = done; });
++    try { return await operation(); } finally { this.heavyOperation = false; this.releaseHeavy?.(); }
++  }
+ 
+   constructor(root: string, options: { maxOpen?: number } = {}) {
+     this.root = safeBackupDirectory(resolve(root), true);
+@@ -223,7 +227,8 @@
+         const service = new Service(ctx.db, { id: 'system', email: 'system', name: 'Sistema', role: 'admin' });
+         await service.closeStaleSessions(at);
+         await service.closeExpiredVisits(at);
+-        ctx.backups.check();
++        // Platform snapshots already contain every gym. Do not duplicate the daily schedule.
++        // Existing individual copies and explicit manual/pre-restore copies are preserved.
+         if (ctx.db.raw.prepare('SELECT total_changes() n').get()!.n !== before) onChanged?.(gym.id);
+       }).catch((error) => console.error('Mantenimiento de gimnasio:', gym.id, error.message));
+     }
+@@ -239,49 +244,22 @@
+       await oldGate;
+       await Promise.allSettled([...this.queues.values()]);
+       authorize();
+-      // All copying below is synchronous, so central writes cannot interleave.
++      // Capture the central registry before yielding; tenant queues stay paused for a coherent capture.
+       const directory = safeBackupDirectory(
+         join(this.root, 'platform-backups', `platform-${Date.now()}-${crypto.randomUUID()}`),
+         true,
+       );
+-      raw.prepare('VACUUM INTO ?').run(join(directory, 'platform.sqlite'));
+-      const sources = join(this.root, 'tenants');
+-      if (existsSync(sources)) {
+-        for (const id of readdirSync(sources)) {
+-          const source = this.directory(id);
+-          const destination = join(directory, 'tenants', id);
+-          mkdirSync(destination, { recursive: true });
+-          const ctx = this.contexts.get(id);
+-          const db = ctx?.db.raw || new DatabaseSync(this.databasePath({ id, name: '' }), { readOnly: true });
+-          try {
+-            db.prepare('VACUUM INTO ?').run(join(destination, 'gympass.sqlite'));
+-          } finally {
+-            if (!ctx) db.close();
+-          }
+-          for (const asset of ['credentials.key', 'photos', 'branding', 'backgrounds', 'tenant.json']) {
+-            const path = join(source, asset);
+-            if (existsSync(path)) {
+-              const info = lstatSync(path);
+-              if (info.isSymbolicLink()) throw new ApiError(409, 'No se respaldan enlaces de archivos.');
+-              if (info.isDirectory()) treeFiles(path);
+-              cpSync(path, join(destination, asset), { recursive: true });
+-            }
+-          }
+-        }
++      try {
++        raw.prepare('VACUUM INTO ?').run(join(directory, 'platform.sqlite'));
++        const sourceRoot = join(this.root, 'tenants');
++        const sources = existsSync(sourceRoot) ? readdirSync(sourceRoot).map(id => ({
++          id, database: this.databasePath({ id, name: '' }),
++        })) : [];
++        return await backupJob<{ id: string; created_at: number }>('platform', { root: this.root, directory, sources });
++      } catch (error) {
++        if (resolve(directory).startsWith(resolve(this.root, 'platform-backups') + sep)) rmSync(directory, { recursive: true, force: true });
++        throw error;
+       }
+-      const files = Object.fromEntries(
+-        treeFiles(directory).map((file) => [
+-          file,
+-          createHash('sha256')
+-            .update(readFileSync(join(directory, file)))
+-            .digest('hex'),
+-        ]),
+-      );
+-      writeFileSync(join(directory, 'complete.json'), JSON.stringify({ format: 1, created_at: Date.now(), files }), {
+-        flag: 'wx',
+-        mode: 0o600,
+-      });
+-      return { id: directory.split(/[\\/]/).at(-1)!, created_at: Date.now() };
+     } finally {
+       release();
+     }
+--- a/src/AccessSounds.tsx
++++ b/src/AccessSounds.tsx
+@@ -38,8 +38,8 @@
+   const voiceHint = recorded
+     ? 'Tus grabaciones: «Acceso permitido» cuando el código es válido y «Acceso denegado» cuando no lo es o está vencido. Se reproducen sin añadir nombres.'
+     : gympassVoice
+-    ? 'La primera prueba descarga unos 110 MB. Después, la voz se genera en este dispositivo.'
+-    : 'Elige una voz de GymPASS o usa las voces en español de tu dispositivo.';
++    ? 'La primera prueba descarga unos 110 MB. En recepción se usa una voz del dispositivo si la voz elegida tarda; los avisos generados se guardan para repetirlos al instante.'
++    : 'La voz automática prioriza voces locales para responder rápido. Las voces anuncian el nombre también cuando el acceso es denegado.';
+   const cancelPreview = () => {
+     previewId.current++;
+     setTesting(false);
+@@ -146,6 +146,7 @@
+             <>
+               <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('entry')}>Probar entrada</button>
+               <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('exit')}>Probar salida</button>
++              <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('entry', false)}>Probar acceso denegado</button>
+             </>
+           )}
+           {testing && <button type="button" className="btn secondary" onClick={cancelPreview}>Detener prueba</button>}
+--- a/src/AppDownloads.tsx
++++ b/src/AppDownloads.tsx
+@@ -1,8 +1,8 @@
+ import { Download, Monitor, Smartphone } from 'lucide-react';
+ import './styles/app-downloads.css';
+ 
+-const release = 'https://github.com/DiegoVargasZ/gympass/releases/download/v5.3.0/';
+-const androidApk = release + 'GymPASS-Android-5.3.0.apk';
++const release = 'https://github.com/DiegoVargasZ/gympass/releases/download/v5.4.0/';
++const androidApk = release + 'GymPASS-Android-5.4.0.apk';
+ 
+ export default function AppDownloads() {
+   if (
+@@ -22,20 +22,20 @@
+           <Smartphone size={24} aria-hidden="true" />
+           <span>
+             <strong>Móvil Android</strong>
+-            <small>Descargar APK · v5.3.0</small>
++            <small>Descargar APK · v5.4.0</small>
+           </span>
+           <Download size={16} aria-hidden="true" />
+         </a>
+         <a
+           className="app-download"
+-          href={release + 'GymPASS-Setup-5.3.0.exe'}
++          href={release + 'GymPASS-Setup-5.4.0.exe'}
+           target="_blank"
+           rel="noopener noreferrer"
+         >
+           <Monitor size={24} aria-hidden="true" />
+           <span>
+             <strong>Escritorio Windows</strong>
+-            <small>Descargar instalador · v5.3.0</small>
++            <small>Descargar instalador · v5.4.0</small>
+           </span>
+           <Download size={16} aria-hidden="true" />
+         </a>
+--- a/src/People.tsx
++++ b/src/People.tsx
+@@ -12,10 +12,10 @@
+   ChevronRight,
+   RotateCcw,
+ } from 'lucide-react';
+-import { api, upload, HttpError } from './api';
++import { api, HttpError } from './api';
+ import { copyText, newRequestId } from './browser';
+-import PhotoEditor from './PhotoEditor';
+ import PersonMemberships from './PersonMemberships';
++import SessionDeadline from './SessionDeadline';
+ import { logoUrl } from './branding';
+ import ScopedImage from './ScopedImage';
+ import ShareCredentialButton from './ShareCredentialButton';
+@@ -29,7 +29,7 @@
+   type PersonSummary,
+   type Credential,
+ } from '../lib/domain';
+-import { planEndDate, type PosCatalog, type PosPlan, type PosCheckout, type PosSaleDetail } from '../lib/pos-types';
++import { planEndDate, defaultSessionUntil, type PosCatalog, type PosPlan, type PosCheckout, type PosSaleDetail } from '../lib/pos-types';
+ import { usePeople } from './usePeople';
+ import { qrSvg } from '../lib/qr';
+ import type { CardData } from '../lib/card';
+@@ -55,10 +55,10 @@
+   onDone: () => Promise<void>;
+   onClose: () => void;
+ }) {
+-  const [photo, setPhoto] = useState<Blob | null | undefined>(null);
+   const [kind, setKind] = useState(person?.kind || 'member'),
+     [plans, setPlans] = useState<PosPlan[] | null>(null),
+     [planId, setPlanId] = useState(''),
++    [sessionsUntil, setSessionsUntil] = useState<string | null>(null),
+     [planError, setPlanError] = useState(''),
+     [uncertain, setUncertain] = useState(false),
+     [registered, setRegistered] = useState(false);
+@@ -67,6 +67,7 @@
+   const selectedPlan = !person && planHolder(kind) ? plans?.find((plan) => plan.id === planId) : undefined;
+   const today = person ? data.today : localParts(new Date(), data.settings.timezone).date;
+   const end = selectedPlan ? planEndDate(today, selectedPlan.unit, selectedPlan.duration) : null;
++  const deadline = selectedPlan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(today) : '';
+   async function loadPlans(signal?: AbortSignal) {
+     try {
+       const catalog = await api<PosCatalog>('pos/catalog', 'GET', undefined, signal);
+@@ -104,7 +105,6 @@
+                     : 'Registrar persona'
+         }
+         onSubmit={async (f) => {
+-          if (photo === undefined) throw Error('Espera a que termine de prepararse la foto.');
+           if (pending.current || (!savedId.current && selectedPlan)) {
+             if (!pending.current) {
+               if (f.get('status') !== 'active') throw Error('El socio debe estar activo para registrar un plan.');
+@@ -122,6 +122,7 @@
+                 },
+                 payment_method: f.get('payment_method') as PosCheckout['payment_method'],
+                 expected_total_cents: selectedPlan!.price_cents,
++                ...(selectedPlan!.unit === 'sessions' ? { sessions_until: deadline } : {}),
+                 lines: [
+                   {
+                     kind: 'plan',
+@@ -161,16 +162,6 @@
+             savedId.current = saved.id;
+             if (!person) setRegistered(true);
+           }
+-          if (photo) {
+-            try {
+-              await upload('people/' + savedId.current + '/photo', photo);
+-            } catch (error) {
+-              throw Error(
+-                'La persona se guardó, pero la foto no pudo cargarse. Puedes reintentar sin duplicarla. ' +
+-                  (error as Error).message,
+-              );
+-            }
+-          }
+           await onDone();
+           onClose();
+         }}
+@@ -183,13 +174,10 @@
+         )}
+         {registered && (
+           <p className="helper" role="status">
+-            El registro ya se guardó{selectedPlan ? ' junto con el cobro del plan' : ''}. Reintentar completa la foto y
+-            la actualización de la lista sin volver a cobrar.
++            El registro ya se guardó{selectedPlan ? ' junto con el cobro del plan' : ''}. Reintentar actualiza la lista sin volver a cobrar.
+           </p>
+         )}
+         <fieldset disabled={uncertain || registered}>
+-          {person?.photo_path && <Avatar name={person.name} personId={person.id} photoPath={person.photo_path} />}
+-          <PhotoEditor onChange={setPhoto} />
+           <div className="form-grid">
+             <Field label="Nombre completo">
+               <input name="name" required maxLength={120} defaultValue={person?.name} placeholder="Nombre y apellido" />
+@@ -261,6 +249,7 @@
+                 </select>
+               </Field>
+             )}
++            {selectedPlan?.unit === 'sessions' && <SessionDeadline start={today} value={deadline} onChange={setSessionsUntil} />}
+           </div>
+           {!person && planHolder(kind) && planError && (
+             <p className="error-message" role="alert">
+@@ -279,7 +268,7 @@
+             <div className="helper" aria-live="polite">
+               <p>
+                 {selectedPlan.unit === 'sessions'
+-                  ? `${selectedPlan.duration} sesiones desde ${today}, sin vencimiento por fecha.`
++                  ? `${selectedPlan.duration} sesiones del ${today} al ${deadline}, inclusive.`
+                   : `Válido del ${today} al ${nextDate(end!, -1)}, inclusive.`}
+               </p>
+               <p>
+@@ -319,7 +308,7 @@
+                     : kind !== 'member'
+                       ? 'El acceso del personal no vence con el plan. Ajusta su vencimiento editando la ficha.'
+                       : selectedPlan.unit === 'sessions'
+-                        ? 'El acceso depende de las sesiones disponibles, sin vencimiento por fecha.'
++                        ? 'El acceso depende de las sesiones disponibles y de su fecha límite.'
+                         : 'Último día de acceso incluido en el plan. Se calcula automáticamente.'
+                 }
+               >
+@@ -327,7 +316,7 @@
+                   <input
+                     type="date"
+                     name="expires"
+-                    value={kind === 'member' && end ? nextDate(end, -1) : ''}
++                    value={kind === 'member' ? (selectedPlan.unit === 'sessions' ? deadline : end ? nextDate(end, -1) : '') : ''}
+                     readOnly
+                   />
+                 ) : (
+--- a/src/PersonMemberships.tsx
++++ b/src/PersonMemberships.tsx
+@@ -2,6 +2,7 @@
+ import { Plus } from 'lucide-react';
+ import {
+   planEndDate,
++  defaultSessionUntil,
+   type MembershipSummary,
+   type PlanGate,
+   type PosCatalog,
+@@ -12,6 +13,7 @@
+ } from '../lib/pos-types';
+ import { nextDate } from '../lib/domain';
+ import { api } from './api';
++import SessionDeadline from './SessionDeadline';
+ import { newRequestId } from './browser';
+ import { Badge, Empty, Field, Form, Skeleton } from './ui';
+ import './styles/pos.css';
+@@ -29,6 +31,7 @@
+ function state(membership: PosMembership, today: string) {
+   if (membership.status === 'void') return 'Anulado';
+   if (membership.start_date > today) return 'Próximo';
++  if (membership.end_date && today >= membership.end_date) return 'Vencido';
+   if (membership.unit === 'sessions') return membership.sessions_remaining ? 'Disponible' : 'Agotado';
+   return membership.end_date && today >= membership.end_date ? 'Vencido' : 'Vigente';
+ }
+@@ -151,7 +154,7 @@
+                 </div>
+                 <p className="membership-dates">
+                   {membership.unit === 'sessions'
+-                    ? `${membership.sessions_remaining} de ${membership.sessions_total} sesiones · desde el ${day(membership.start_date)}`
++                    ? `${membership.sessions_remaining} de ${membership.sessions_total} sesiones · desde el ${day(membership.start_date)}${membership.end_date ? ` hasta el ${day(lastDay(membership.end_date))}` : ''}`
+                     : membership.end_date
+                       ? `Del ${day(membership.start_date)} al ${day(lastDay(membership.end_date))}`
+                       : `Desde el ${day(membership.start_date)}, sin vencimiento`}
+@@ -188,6 +191,7 @@
+     [plans, setPlans] = useState<PosPlan[] | null>(null),
+     [planId, setPlanId] = useState(''),
+     [start, setStart] = useState(today),
++    [sessionsUntil, setSessionsUntil] = useState<string | null>(null),
+     [gate, setGate] = useState<PlanGate | null>(null),
+     [loading, setLoading] = useState(false),
+     [error, setError] = useState('');
+@@ -217,6 +221,7 @@
+   }, [open, personId, today]);
+   const plan = plans?.find((item) => item.id === planId);
+   const end = plan && start ? planEndDate(start, plan.unit, plan.duration) : null;
++  const deadline = plan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(start || today) : '';
+   if (!open)
+     return (
+       <button className="btn secondary" onClick={() => setOpen(true)}>
+@@ -243,6 +248,7 @@
+             request_id: newRequestId(),
+             person_id: personId,
+             start_date: start,
++            ...(plan.unit === 'sessions' ? { sessions_until: deadline } : {}),
+             payment_method: form.get('payment_method') as PosCheckout['payment_method'],
+             expected_total_cents: plan.price_cents,
+             lines: [
+@@ -292,6 +298,7 @@
+               <option value="card">Tarjeta</option>
+             </select>
+           </Field>
++          {plan?.unit === 'sessions' && <SessionDeadline start={start} value={deadline} onChange={setSessionsUntil} />}
+         </div>
+         {loading && (
+           <p className="helper" role="status">
+@@ -315,7 +322,7 @@
+         {plan && (
+           <p className="helper" aria-live="polite">
+             {plan.unit === 'sessions'
+-              ? `${plan.duration} sesiones desde ${start}, sin vencimiento por fecha.`
++              ? `${plan.duration} sesiones del ${start} al ${deadline}, inclusive.`
+               : `Válido del ${start} al ${nextDate(end!, -1)}, inclusive.`}{' '}
+             El cobro queda registrado hoy. El nuevo plan empieza en la fecha indicada sin cortar el plan vigente.
+           </p>
+--- a/src/Platform.tsx
++++ b/src/Platform.tsx
+@@ -43,6 +43,7 @@
+   contact_name: string;
+   contact_email: string;
+   contact_phone: string;
++  member_count?: number | null;
+ };
+ type Status = {
+   mode: 'platform' | 'local';
+@@ -136,6 +137,17 @@
+         setStatus(next);
+         setMode('platform');
+         setError('');
++        if (next.user?.global_role === 'superadmin') {
++          const updateCounts = (counts: Record<string, number | null>) => {
++            if (sequence !== requestSequence.current) return;
++            setStatus(current => current?.user?.global_role === 'superadmin' && current.user.id === next.user?.id
++              ? { ...current, gyms: current.gyms.map(gym => ({ ...gym, member_count: counts[gym.id] ?? null })) }
++              : current);
++          };
++          void api<{ counts: Record<string, number | null> }>('platform/gym-member-counts' + (scope === 'active' ? '' : '?scope=' + scope))
++            .then(result => updateCounts(result.counts || {}))
++            .catch(() => updateCounts({}));
++        }
+         if (autoOpen && next.user?.global_role === 'user' && !tokenFromHash()) {
+           const allowed = next.gyms.filter((gym) => gym.status === 'active');
+           const requested = new URLSearchParams(location.search).get('gym');
+@@ -641,6 +653,14 @@
+                               ? 'Cajero'
+                               : 'Consulta'}
+                       </p>
++                      {superadmin && (
++                        <p className="platform-member-count">
++                          <Users size={15} aria-hidden="true" />
++                          <span>Socios registrados: <strong>{gym.member_count === undefined
++                            ? 'Consultando…'
++                            : gym.member_count === null ? 'No disponible' : gym.member_count.toLocaleString('es-BO')}</strong></span>
++                        </p>
++                      )}
+                     </div>
+                     <span className={'platform-state platform-state-' + gym.status}>
+                       {gym.deleted ? 'Dado de baja' : gym.archived ? 'Archivado' : statuses[gym.status]}
+--- a/src/PlatformBackups.tsx
++++ b/src/PlatformBackups.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useRef, useState } from 'react';
+ import { Download, HardDrive, RefreshCw, Upload } from 'lucide-react';
+-import { maxBackupTransferBytes } from '../lib/backup-limits';
++import { maxBackupTransferBytes, backupTransferLimitLabel } from '../lib/backup-limits';
+ import { api, download, uploadBackup } from './api';
+ import { Empty, Field, Form, Modal, Skeleton } from './ui';
+ 
+@@ -199,7 +199,7 @@
+       {importOpen && (
+         <Modal title="Usar respaldo descargado" onClose={() => { if (!busy) setImportOpen(false); }}>
+           <p>Selecciona un archivo .gympassbackup de este gimnasio. Se verificará antes de añadirlo a la lista de respaldos.</p>
+-          <p className="helper">Importar conserva los datos actuales. El archivo puede pesar hasta 256 MiB.</p>
++          <p className="helper">Importar conserva los datos actuales. El archivo puede pesar hasta {backupTransferLimitLabel}.</p>
+           <Form
+             label="Importar y verificar"
+             onCancel={() => { if (!busy) setImportOpen(false); }}
+@@ -208,7 +208,7 @@
+               if (!file || typeof file === 'string' || !/\.gympassbackup$/i.test(file.name))
+                 throw Error('Selecciona un archivo .gympassbackup.');
+               if (!file.size || file.size > maxBackupTransferBytes)
+-                throw Error('El archivo debe contener un respaldo de hasta 256 MiB.');
++                throw Error('El archivo debe contener un respaldo de hasta ' + backupTransferLimitLabel + '.');
+               setBusy(true);
+               setNotice('');
+               try {
+--- a/src/Pos.tsx
++++ b/src/Pos.tsx
+@@ -4,6 +4,7 @@
+ import type { Bootstrap, PersonSummary } from '../lib/domain';
+ import {
+   planEndDate,
++  defaultSessionUntil,
+   type PosCatalog,
+   type PosCheckout,
+   type PlanGate,
+@@ -18,6 +19,7 @@
+ import { usePeople } from './usePeople';
+ import { newRequestId } from './browser';
+ import PersonMemberships from './PersonMemberships';
++import SessionDeadline from './SessionDeadline';
+ import PosReports from './PosReports';
+ import ShareCredentialButton from './ShareCredentialButton';
+ import { Badge, Empty, Field, Form, Modal, RecordList, Skeleton, type Notify } from './ui';
+@@ -71,6 +73,7 @@
+     [newMember, setNewMember] = useState<PosCheckout['new_member']>(recovered?.payload.new_member),
+     [registerOpen, setRegisterOpen] = useState(false),
+     [start, setStart] = useState(recovered?.payload.start_date || data.today),
++    [sessionsUntil, setSessionsUntil] = useState<string | null>(recovered?.payload.sessions_until ?? null),
+     [method, setMethod] = useState<PaymentMethod>(recovered?.payload.payment_method || 'cash'),
+     [uncertain, setUncertain] = useState(!!recovered),
+     [submitting, setSubmitting] = useState(false),
+@@ -101,6 +104,9 @@
+   }, [uncertain, submitting]);
+   const people = usePeople({ q: personQuery, kind: 'member', page: personPage, limit: 20 });
+   const hasPlan = cart.some((line) => line.kind === 'plan');
++  const hasSessions = cart.some((line) => line.kind === 'plan' && catalog.plans.find((plan) => plan.id === line.id)?.unit === 'sessions');
++  const sessionStart = newMember ? data.today : start;
++  const deadline = hasSessions ? sessionsUntil ?? defaultSessionUntil(sessionStart || data.today) : '';
+   useEffect(() => {
+     if (hasPlan) return;
+     setNewMember(undefined);
+@@ -261,6 +267,7 @@
+                   : {}),
+                 payment_method: method,
+                 expected_total_cents: total,
++                ...(hasSessions ? { sessions_until: deadline } : {}),
+                 lines: cart.map((line) => ({
+                   ...line,
+                   ...(line.kind === 'plan'
+@@ -544,6 +551,7 @@
+                 ))}
+               </select>
+             </Field>
++            {hasSessions && <SessionDeadline start={sessionStart} value={deadline} onChange={setSessionsUntil} />}
+             {hasPlan && (
+               <div className="pos-validity" aria-live="polite">
+                 {cart
+@@ -559,7 +567,7 @@
+                         </strong>
+                         <br />
+                         {plan.unit === 'sessions'
+-                          ? `${plan.duration * line.quantity} sesiones desde ${start || 'la fecha elegida'}, sin vencimiento`
++                          ? `${plan.duration * line.quantity} sesiones del ${sessionStart} al ${deadline}, inclusive`
+                           : start && end
+                             ? `Válido del ${start} al ${lastValidDate(end)}, inclusive`
+                             : 'Elige una fecha de inicio válida.'}
+@@ -909,7 +917,7 @@
+           <p key={membership.id}>
+             {membership.name} ·{' '}
+             {membership.unit === 'sessions'
+-              ? `${membership.sessions_total} sesiones desde ${membership.start_date}`
++              ? `${membership.sessions_total} sesiones desde ${membership.start_date}${membership.end_date ? ` hasta ${lastValidDate(membership.end_date)}` : ''}`
+               : `${membership.start_date} al ${membership.end_date ? lastValidDate(membership.end_date) : 'sin vencimiento'}`}
+           </p>
+         ))}
+--- /dev/null
++++ b/src/SessionDeadline.tsx
+@@ -0,0 +1,9 @@
++import { Field } from './ui';
++
++export default function SessionDeadline({ start, value, onChange }: {
++  start: string; value: string; onChange: (value: string) => void;
++}) {
++  return <Field label="Fecha límite de las sesiones" hint="Último día incluido. Al vencer, las sesiones restantes dejan de permitir entradas.">
++    <input type="date" required min={start} value={value} onChange={(event) => onChange(event.target.value)} />
++  </Field>;
++}
+--- a/src/api.ts
++++ b/src/api.ts
+@@ -1,4 +1,4 @@
+-import { assertPlatformGeneration, getPlatformGeneration, platformFetch } from './platform-context.ts';
++import { apiUrl, assertPlatformGeneration, getPlatformGeneration, platformFetch } from './platform-context.ts';
+ 
+ /** The request never reached the server, so retrying it later is safe. */
+ export class NetworkError extends Error {
+@@ -25,11 +25,10 @@
+   const revision = sessionRevision;
+   const contextGeneration = getPlatformGeneration();
+   const requestBody = body === undefined && !['GET', 'HEAD'].includes(method.toUpperCase()) ? {} : body;
++  const backupOperation = path.startsWith('backups') || path === 'platform/backups' || /^platform\/gyms\/[^/]+\/backups(?:\/|$)/.test(path);
+   const timeout = AbortSignal.timeout(
+-    path === 'network/check' ||
+-      path.startsWith('backups') ||
++    backupOperation ? 30 * 60000 : path === 'network/check' ||
+       path.startsWith('cloud-sync/') ||
+-      path === 'platform/backups' ||
+       path === 'system/update' ||
+       path === 'system/reset'
+       ? 120000
+@@ -76,6 +75,17 @@
+ }
+ export async function download(path: string, name: string) {
+   const generation = getPlatformGeneration();
++  if (/^platform\/(?:backups\/[^/]+|gyms\/[^/]+\/backups\/[^/]+)\/export$/.test(path)) {
++    // Let the browser stream private backup attachments to disk, without a multi-gigabyte Blob.
++    // The same-origin request carries the session cookie; errors remain readable in the new tab.
++    const link = document.createElement('a');
++    link.href = apiUrl(path);
++    link.target = '_blank';
++    link.rel = 'noopener noreferrer';
++    assertPlatformGeneration(generation);
++    link.click();
++    return;
++  }
+   const r = await platformFetch(path);
+   if (!r.ok) {
+     const data = await r.json();
+@@ -97,7 +107,7 @@
+     method: 'POST',
+     headers: { 'Content-Type': 'application/octet-stream', 'X-Requested-With': 'GymPASS' },
+     body: file,
+-    signal: AbortSignal.timeout(120000),
++    signal: AbortSignal.timeout(30 * 60000),
+   });
+   const data = await response.json().catch(() => null);
+   assertPlatformGeneration(generation);
+--- a/src/credential-cards.ts
++++ b/src/credential-cards.ts
+@@ -1,5 +1,5 @@
+ import { api } from './api';
+-import { inlineLogo, inlinePhoto } from './card-download';
++import { inlineLogo } from './card-download';
+ import { kindLabels, type Settings } from '../lib/domain';
+ import { displayBrandColor } from '../lib/branding';
+ import type { CardData } from '../lib/card';
+@@ -20,6 +20,7 @@
+     person_id: string;
+     photo_path: string | null;
+     code: string;
++    plan_name?: string;
+   }>('credentials/' + encodeURIComponent(id) + '/card', 'GET', undefined, signal);
+   return {
+     name: row.name,
+@@ -28,12 +29,12 @@
+     organization: settings.name,
+     expires: null,
+     access_note: 'Acceso según el plan vigente',
++    plan_name: row.plan_name || 'Sin plan vigente',
+     code: row.code,
+     accent: settings.credential_color || displayBrandColor(settings.brand_color),
+     header: settings.credential_color,
+     watermark_size: settings.credential_watermark_size,
+     watermark: settings.logo_path ? await inlineLogo(settings.logo_path) : null,
+     label: 'Credencial permanente',
+-    photo: row.photo_path ? await inlinePhoto(row.person_id) : null,
+   };
+ }
+--- a/src/feedback.ts
++++ b/src/feedback.ts
+@@ -8,6 +8,11 @@
+ let playing: AudioBufferSourceNode | undefined;
+ let sequence = 0;
+ let activeSpeech: { utterance: SpeechSynthesisUtterance; stop: () => void } | undefined;
++declare global {
++  interface Window {
++    __gympassNativeVoice?: { speak(text: string, rate: number): Promise<boolean>; stop(): void };
++  }
++}
+ 
+ function deadline<T>(work: Promise<T>, milliseconds: number): Promise<T | undefined> {
+   return new Promise((resolve, reject) => {
+@@ -20,10 +25,11 @@
+   try {
+     if (!context || typeof Worker === 'undefined') return false;
+     const engine = await import('./voice-engine');
+-    const ready = engine.prepareGympassVoice(voice.preset).then(() => true);
+-    if (!(preview ? await ready : await deadline(ready, 1800)) || current !== sequence) return false;
+-    const work = engine.renderGympassVoice(voice.preset, text, rate);
+-    const audio = preview ? await work : await deadline(work, 3000);
++    // La generación sigue en segundo plano y queda en caché. El lector nunca
++    // espera la descarga de modelos ni varios segundos de inferencia.
++    const work = engine.prepareGympassVoice(voice.preset).then(() =>
++      current === sequence ? engine.renderGympassVoice(voice.preset, text, rate) : undefined);
++    const audio = preview ? await work : await deadline(work, 250);
+     if (!audio || current !== sequence || context.state !== 'running') return false;
+     const decoded = context.createBuffer(1, audio.samples.length, audio.sampleRate);
+     decoded.copyToChannel(audio.samples, 0);
+@@ -48,7 +54,7 @@
+       engine.removeEventListener('voiceschanged', ready);
+       resolve(engine.getVoices());
+     };
+-    const timer = setTimeout(ready, 700);
++    const timer = setTimeout(ready, 150);
+     engine.addEventListener('voiceschanged', ready);
+   });
+ }
+@@ -87,12 +93,13 @@
+     const timer = setTimeout(() => {
+       finish(false);
+       try { engine.cancel(); } catch {}
+-    }, 3000);
++    }, 800);
+     activeSpeech = { utterance, stop: () => finish(true) };
+     utterance.onstart = () => clearTimeout(timer);
+     utterance.onend = () => finish(true);
+     utterance.onerror = () => finish(false);
+     try {
++      if (engine.paused) engine.resume();
+       engine.speak(utterance);
+     } catch {
+       finish(false);
+@@ -100,14 +107,18 @@
+   });
+ }
+ 
+-async function announce(direction: string, personName: string, current: number, settings: VoiceSettings): Promise<boolean> {
+-  try {
++async function announce(direction: string, personName: string, current: number, settings: VoiceSettings, allowed: boolean): Promise<boolean> {
++  try {
++    if (typeof window !== 'undefined' && window.__gympassNativeVoice) {
++      if (current !== sequence) return true;
++      return await window.__gympassNativeVoice.speak(feedbackAnnouncement(direction, personName, allowed), settings.voiceRate);
++    }
+     const engine = speechEngine();
+     if (!engine) return false;
+     const voices = await availableVoices(engine);
+     if (current !== sequence) return true;
+     const voice = preferredSpanishVoice(voices, navigator.onLine !== false, settings);
+-    const text = feedbackAnnouncement(direction, personName);
++    const text = feedbackAnnouncement(direction, personName, allowed);
+     if (await speak(engine, text, settings.voiceRate, voice)) return true;
+     if (current !== sequence) return true;
+     if (voice && !voice.localService) {
+@@ -164,6 +175,7 @@
+ export function stopFeedback() {
+   ++sequence;
+   activeSpeech?.stop();
++  try { if (typeof window !== 'undefined') window.__gympassNativeVoice?.stop(); } catch {}
+   try { speechEngine()?.cancel(); } catch {}
+   try { playing?.stop(); } catch {}
+   playing = undefined;
+@@ -191,12 +203,12 @@
+       } catch {
+         // Keep the original confirmation tone if a recording cannot be loaded.
+       }
+-    } else if (allowed) {
++    } else {
+       const voice = findGympassVoice(options.voiceURI);
+-      if (voice && await playGympassVoice(voice, feedbackAnnouncement(direction, personName), options.voiceRate, current, preview))
++      if (voice && await playGympassVoice(voice, feedbackAnnouncement(direction, personName, allowed), options.voiceRate, current, preview))
+         return 'gympass';
+       if (current !== sequence) return 'none';
+-      if (await announce(direction, personName, current, options)) return current === sequence ? 'device' : 'none';
++      if (await announce(direction, personName, current, options, allowed)) return current === sequence ? 'device' : 'none';
+     }
+     if (current !== sequence || !context) return 'none';
+     const decoded = await buffer(feedbackSound({ allowed: Number(allowed), direction }));
+--- a/src/styles/platform.css
++++ b/src/styles/platform.css
+@@ -65,6 +65,12 @@
+   margin: 0 0 5px;
+   overflow-wrap: anywhere;
+   font-size: 18px;
++}
++.platform-gym .platform-member-count {
++  display: flex;
++  align-items: center;
++  gap: 6px;
++  margin-top: 6px;
+ }
+ .platform-state {
+   padding: 5px 8px;
+--- a/src/ui.tsx
++++ b/src/ui.tsx
+@@ -1,5 +1,3 @@
+-import { apiUrl } from './platform-context';
+-import ScopedImage from './ScopedImage';
+ import PasswordInput from './PasswordInput';
+ import {
+   Children,
+@@ -241,15 +239,6 @@
+   personId?: string | null;
+   photoPath?: string | null;
+ }) {
+-  if (personId && photoPath)
+-    return (
+-      <ScopedImage
+-        className="avatar person-photo"
+-        src={apiUrl('people/' + encodeURIComponent(personId) + '/photo?v=' + encodeURIComponent(photoPath))}
+-        alt={'Foto de ' + name}
+-        loading="lazy"
+-      />
+-    );
+   return (
+     <span className="avatar">
+       {name
+--- a/tests/access-feedback.test.ts
++++ b/tests/access-feedback.test.ts
+@@ -118,7 +118,7 @@
+   assert.equal(f.spoken[0].text, 'Saliendo, José Núñez.');
+   f.api.accessFeedback(true, true, false, 'entry', 'José Núñez', { voiceURI: '', voiceGender: 'male', voiceRate: 0.98 });
+   await f.settle();
+-  assert.equal(f.spoken[1].voice, jorge);
++  assert.equal(f.spoken[1].voice, raul);
+ });
+ 
+ test('si falla la voz en línea, intenta una voz local del mismo tipo antes de usar el tono', async (t) => {
+@@ -155,12 +155,12 @@
+   assert.deepEqual(f.tones, []);
+ });
+ 
+-test('el acceso denegado conserva su tono y nunca anuncia una entrada', async (t) => {
++test('el acceso denegado pronuncia el nombre sin anunciar una entrada', async (t) => {
+   const f = fixture(t);
+   f.api.accessFeedback(false, true, true, 'entry', 'Ana');
+   await f.settle();
+-  assert.deepEqual(f.spoken, []);
+-  assert.deepEqual(f.tones, ['/sounds/denied.wav']);
++  assert.equal(f.spoken[0].text, 'Acceso denegado, Ana.');
++  assert.deepEqual(f.tones, []);
+   assert.deepEqual(f.vibration.map(String), ['100,60,100']);
+ });
+ 
+@@ -202,7 +202,7 @@
+   await f.settle();
+   assert.deepEqual(f.tones, []);
+   const before = f.cancellations;
+-  t.mock.timers.tick(3000);
++  t.mock.timers.tick(800);
+   await f.settle();
+   assert.equal(f.cancellations, before + 1);
+   assert.deepEqual(f.tones, ['/sounds/entry.wav']);
+@@ -212,7 +212,7 @@
+   t.mock.timers.enable({ apis: ['setTimeout'] });
+   const f = fixture(t, { delayedVoices: true });
+   f.api.accessFeedback(true, true, false, 'exit', 'Ana');
+-  t.mock.timers.tick(700);
++  t.mock.timers.tick(150);
+   await f.settle();
+   assert.equal(f.spoken[0].text, 'Saliendo, Ana.');
+   assert.equal(f.spoken[0].lang, 'es-BO');
+--- a/tests/component-harness.ts
++++ b/tests/component-harness.ts
+@@ -7,6 +7,7 @@
+ import * as voiceCatalog from '../lib/voice-catalog.ts';
+ import * as backupLimits from '../lib/backup-limits.ts';
+ import * as accent from '../lib/accent.ts';
++import * as posTypes from '../lib/pos-types.ts';
+ 
+ export type Element = { type: unknown; props: Record<string, any> };
+ 
+@@ -117,11 +118,12 @@
+         if (/lib\/voice-catalog$/.test(name)) return voiceCatalog;
+         if (/lib\/backup-limits$/.test(name)) return backupLimits;
+         if (/lib\/accent$/.test(name)) return accent;
++        if (/lib\/pos-types$/.test(name)) return { ...posTypes, ...(dependencies[name] || {}) };
+         if (name in dependencies) {
+           const dependency = dependencies[name];
+           return dependency && 'default' in dependency ? { __esModule: true, ...dependency } : dependency;
+         }
+-        if (['./ConnectionStatus', './ServerAccessLink', './PasswordInput', './ThemeToggle'].includes(name))
++        if (['./ConnectionStatus', './ServerAccessLink', './PasswordInput', './ThemeToggle', './SessionDeadline'].includes(name))
+           return { __esModule: true, default: name.slice(2) };
+         throw Error(`Dependencia no configurada: ${name}`);
+       },
+--- /dev/null
++++ b/tests/credential-plan.test.ts
+@@ -0,0 +1,21 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { cardSvg } from '../lib/card.ts';
++import { componentHarness } from './component-harness.ts';
++
++test('la credencial muestra el plan y conserva el QR sin insertar fotos antiguas', async () => {
++  const calls: string[] = [];
++  const h = componentHarness();
++  const { credentialCardData } = h.load('../src/credential-cards.ts', {
++    './api': { api: async () => ({ name: 'Ana Pérez', document: '123', person_kind: 'member', person_id: 'ana', photo_path: 'antigua.png', code: 'PERMANENT-QR', plan_name: '15 sesiones < mensual' }) },
++    './card-download': { inlineLogo: async () => null, inlinePhoto: async () => { calls.push('photo'); return 'data:image/png;base64,AAAA'; } },
++    '../lib/domain': { kindLabels: { member: 'Socio' } }, '../lib/branding': { displayBrandColor: () => '#636b2f' },
++  });
++  const card = await credentialCardData('qr', { name: 'Gym', brand_color: '#636b2f' });
++  assert.equal(card.plan_name, '15 sesiones < mensual');
++  assert.equal(card.code, 'PERMANENT-QR');
++  assert.deepEqual(calls, []);
++  const svg = cardSvg({ ...card, photo: 'data:image/png;base64,AAAA' });
++  assert.match(svg, /15 sesiones &lt; mensual/);
++  assert.doesNotMatch(svg, /photoClip|data:image\/png;base64,AAAA/);
++});
+--- a/tests/member-registration-ui.test.ts
++++ b/tests/member-registration-ui.test.ts
+@@ -104,7 +104,7 @@
+   for (const [id, expires] of [
+     ['month', '2028-02-28'],
+     ['week', '2028-02-06'],
+-    ['sessions', ''],
++    ['sessions', '2028-02-28'],
+   ] as const) {
+     await view.choose(id);
+     const field = findElement(view.tree, (node) => node.type === 'input' && node.props.name === 'expires');
+@@ -144,13 +144,13 @@
+   assert.equal(view.closed, 1);
+ });
+ 
+-test('una foto fallida se reintenta sin volver a cobrar el plan ni registrar otra persona', async (t) => {
+-  const view = await fixture(t, 'photo');
+-  await view.choose('month');
+-  await view.photo();
+-  await assert.rejects(view.submit(), /foto/);
+-  view.succeed();
++test('el registro ya no solicita ni sube una foto y cobra el plan una sola vez', async (t) => {
++  const view = await fixture(t);
++  assert.throws(() => findElement(view.tree, node => node.type === 'PhotoEditor'));
++  await view.choose('sessions');
+   await view.submit();
+-  assert.equal(view.requests.filter((request) => request.method === 'POST').length, 1);
++  const writes = view.requests.filter(request => request.method === 'POST');
++  assert.equal(writes.length, 1);
++  assert.equal(writes[0].body.sessions_until, '2028-02-28');
+   assert.equal(view.closed, 1);
+ });
+--- a/tests/member-registration.test.ts
++++ b/tests/member-registration.test.ts
+@@ -7,7 +7,7 @@
+ for (const [unit, duration, end] of [
+   ['months', 1, '2028-02-29'],
+   ['days', 7, '2028-02-07'],
+-  ['sessions', 5, null],
++  ['sessions', 5, '2028-02-29'],
+ ] as const) {
+   test(`alta con plan de ${unit}: socio y cobro únicos, vigencia desde hoy en el gimnasio`, async (t) => {
+     t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2028-02-01T01:00:00Z') });
+@@ -21,6 +21,7 @@
+       request_id: crypto.randomUUID(),
+       new_member: { name: 'Ana', document: 'ALTA-1', kind: 'member', status: 'active', phone: '+591 71234567' },
+       expected_total_cents: 15000,
++      ...(unit === 'sessions' ? { sessions_until: '2028-02-28' } : {}),
+       payment_method: 'transfer',
+       lines: [{ kind: 'plan', id: plan.id, quantity: 1, expected_plan: { unit, duration } }],
+     };
+--- a/tests/pos-access.test.ts
++++ b/tests/pos-access.test.ts
+@@ -18,7 +18,7 @@
+     status: 'active',
+   });
+   const buy = (lines: unknown[], extra = {}) =>
+-    pos.checkout({ request_id: crypto.randomUUID(), payment_method: 'cash', lines, ...extra });
++    pos.checkout({ request_id: crypto.randomUUID(), payment_method: 'cash', sessions_until: '2099-12-31', lines, ...extra });
+   return { db, service, pos, person, buy };
+ }
+ 
+--- a/tests/pos-local-http.test.ts
++++ b/tests/pos-local-http.test.ts
+@@ -92,6 +92,7 @@
+       request_id: randomUUID(),
+       person_id: person.data.id,
+       payment_method: 'transfer',
++      sessions_until: '2099-12-31',
+       lines: [{ kind: 'plan', id: plan.data.id, quantity: 1 }],
+     });
+     assert.equal(sale.status, 201, JSON.stringify(sale.data));
+--- a/tests/pos-one-plan.test.ts
++++ b/tests/pos-one-plan.test.ts
+@@ -29,6 +29,7 @@
+     service.checkout({
+       request_id: crypto.randomUUID(),
+       payment_method: 'cash',
++      sessions_until: '2099-12-31',
+       person_id: person.id,
+       lines: [{ kind: 'plan', id: planId, quantity }],
+       ...extra,
+@@ -96,6 +97,7 @@
+     pos.checkout({
+       request_id: crypto.randomUUID(),
+       payment_method: 'cash',
++      sessions_until: '2099-12-31',
+       person_id: person.id,
+       lines: [
+         { kind: 'plan', id: monthly.id, quantity: 1 },
+@@ -177,6 +179,7 @@
+   const sale = await pos.checkout({
+     request_id: crypto.randomUUID(),
+     payment_method: 'cash',
++      sessions_until: '2099-12-31',
+     new_member: { phone: '59171234567', name: 'Nuevo', document: 'N-1', kind: 'member', status: 'active' },
+     lines: [{ kind: 'plan', id: monthly.id, quantity: 1 }],
+   });
+--- a/tests/pos.test.ts
++++ b/tests/pos.test.ts
+@@ -20,7 +20,7 @@
+   });
+   const product = await pos.saveProduct({ name: 'Agua', price_cents: 500, stock: 3, track_stock: 1, active: 1 });
+   const buy = (lines: unknown[], extra = {}) =>
+-    pos.checkout({ request_id: crypto.randomUUID(), payment_method: 'cash', lines, ...extra });
++    pos.checkout({ request_id: crypto.randomUUID(), payment_method: 'cash', sessions_until: '2099-12-31', lines, ...extra });
+   return { db, service, pos, person, product, buy };
+ }
+ 
+--- a/tests/product-costs.test.ts
++++ b/tests/product-costs.test.ts
+@@ -132,7 +132,7 @@
+     const check = new DatabaseSync(':memory:');
+     try { check.exec(table.sql!); } finally { check.close(); }
+   }
+-  const upgraded = upgradeManagementSnapshot({ tables: legacy } as SyncSnapshot);
++  const upgraded = upgradeManagementSnapshot({ tables: legacy, triggers: [] } as unknown as SyncSnapshot);
+   for (const table of upgraded.tables) {
+     assert.ok(table.columns.some(column => column.name === 'cost_cents'));
+     const check = new DatabaseSync(':memory:');
+--- a/tests/release-version.test.ts
++++ b/tests/release-version.test.ts
+@@ -2,14 +2,14 @@
+ import { test } from 'node:test';
+ import { readFile } from 'node:fs/promises';
+ 
+-test('web, Android y Windows usan 5.3.0', async () => {
++test('web, Android y Windows usan 5.4.0', async () => {
+   for (const path of ['package.json', 'desktop/package.json', 'desktop-runtime/package.json']) {
+     const manifest = JSON.parse(await readFile(new URL('../' + path, import.meta.url), 'utf8'));
+-    assert.equal(manifest.version, '5.3.0', path);
++    assert.equal(manifest.version, '5.4.0', path);
+   }
+   const app = JSON.parse(await readFile(new URL('../mobile/app.json', import.meta.url), 'utf8'));
+-  assert.equal(JSON.parse(await readFile(new URL('../mobile/package.json', import.meta.url), 'utf8')).version, '5.3.0');
+-  assert.equal(app.expo.version, '5.3.0');
+-  assert.equal(app.expo.android.versionCode, 5300);
+-  assert.equal(app.expo.ios.buildNumber, '5300');
++  assert.equal(JSON.parse(await readFile(new URL('../mobile/package.json', import.meta.url), 'utf8')).version, '5.4.0');
++  assert.equal(app.expo.version, '5.4.0');
++  assert.equal(app.expo.android.versionCode, 5400);
++  assert.equal(app.expo.ios.buildNumber, '5400');
+ });
+--- /dev/null
++++ b/tests/session-deadlines.test.ts
+@@ -0,0 +1,69 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { randomUUID } from 'node:crypto';
++import { SqliteDatabase } from '../server/database.ts';
++import { Service } from '../lib/service.ts';
++import { PosService } from '../lib/pos.ts';
++import { defaultSessionUntil } from '../lib/pos-types.ts';
++
++async function fixture(t: test.TestContext) {
++  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-14T16:00:00Z') });
++  const db = new SqliteDatabase(':memory:');
++  t.after(() => db.close());
++  db.raw.exec("INSERT INTO settings(id,owner,name,timezone) VALUES(1,'owner','Gym','America/La_Paz')");
++  const service = new Service(db, { id: 'owner', email: 'admin@example.test', name: 'Admin', role: 'admin' });
++  const pos = new PosService(service);
++  const person = await service.savePerson({ name: 'Ana Pérez', document: 'CI-15', kind: 'member', status: 'active', phone: '59171234567' });
++  const plan = await pos.savePlan({ name: '15 sesiones', unit: 'sessions', duration: 15, price_cents: 15000 });
++  const sell = (extra = {}) => pos.checkout({ request_id: randomUUID(), person_id: person.id, payment_method: 'cash', lines: [{ kind: 'plan', id: plan.id, quantity: 1 }], ...extra });
++  const scan = (at: string, direction = 'entry') => service.access({ request_id: randomUUID(), person_id: person.id, direction, reason: 'Prueba de sesiones' }, undefined, new Date(at));
++  return { db, service, pos, person, plan, sell, scan };
++}
++
++test('sesiones: exige una fecha válida sin registrar cobros al faltar o preceder al inicio', async t => {
++  const { sell, db } = await fixture(t);
++  for (const extra of [{}, { sessions_until: '2026-11-13' }, { sessions_until: '2026-02-30' }])
++    await assert.rejects(sell(extra));
++  assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM pos_sales').get()!.n, 0);
++  assert.equal(defaultSessionUntil('2026-11-14'), '2026-12-13');
++  assert.equal(defaultSessionUntil('2026-01-31'), '2026-02-27');
++});
++
++test('sesiones: incluye el último día local y bloquea después sin descontar sesiones', async t => {
++  const { sell, scan, db, service, pos, person } = await fixture(t);
++  const sale = await sell({ sessions_until: '2026-12-13' });
++  const membership = sale.memberships[0];
++  assert.equal(membership.end_date, '2026-12-14');
++  assert.equal((await service.personSummary(person.id)).expires, '2026-12-13');
++  assert.equal((await scan('2026-12-14T03:59:59Z')).allowed, 1);
++  assert.equal((await scan('2026-12-14T04:00:00Z', 'exit')).allowed, 1);
++  assert.equal((await scan('2026-12-14T04:00:01Z')).allowed, 0);
++  assert.equal(db.raw.prepare('SELECT sessions_remaining n FROM pos_memberships WHERE id=?').get(membership.id)!.n, 14);
++  t.mock.timers.setTime(Date.parse('2026-12-14T16:00:00Z'));
++  assert.equal((await service.personSummary(person.id)).sessions_remaining, 0);
++  assert.equal((await pos.memberships(person.id)).valid, false);
++  assert.equal((await pos.planGate(person.id, '2026-12-14')).state, 'free');
++  // El trigger también permite renovar aunque queden sesiones del paquete vencido.
++  const renewal = await sell({ sessions_until: '2027-01-13' });
++  assert.equal(renewal.memberships[0].sessions_remaining, 15);
++});
++
++test('sesiones: agotarlas antes de la fecha límite bloquea el acceso y permite otro plan', async t => {
++  const { sell, scan, db, pos, person } = await fixture(t);
++  const sale = await sell({ sessions_until: '2026-12-13' });
++  db.raw.prepare('UPDATE pos_memberships SET sessions_remaining=1 WHERE id=?').run(sale.memberships[0].id);
++  assert.equal((await scan('2026-11-14T16:00:00Z')).allowed, 1);
++  await scan('2026-11-14T16:01:00Z', 'exit');
++  assert.equal((await scan('2026-11-14T16:02:00Z')).reason, 'SESSIONS_EXHAUSTED');
++  assert.equal((await pos.memberships(person.id)).valid, false);
++  assert.equal((await pos.planGate(person.id, '2026-11-14')).state, 'free');
++});
++
++test('sesiones: reintentar conserva el cobro y cambiar la fecha exige otra solicitud', async t => {
++  const { sell, db } = await fixture(t);
++  const request_id = randomUUID();
++  const first = await sell({ request_id, sessions_until: '2026-12-13' });
++  assert.equal((await sell({ request_id, sessions_until: '2026-12-13' })).id, first.id);
++  await assert.rejects(sell({ request_id, sessions_until: '2026-12-14' }), /identificador/);
++  assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM pos_sales').get()!.n, 1);
++});
+--- /dev/null
++++ b/tests/voice-latency.test.ts
+@@ -0,0 +1,43 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { componentHarness } from './component-harness.ts';
++
++test('Android anuncia nombre y rechazo con su voz nativa aunque Web Speech no exista', async () => {
++  const messages: { text: string; rate: number }[] = [];
++  let stopped = 0;
++  const h = componentHarness({ window: { __gympassNativeVoice: {
++    speak: async (text: string, rate: number) => { messages.push({ text, rate }); return true; },
++    stop: () => stopped++,
++  } } });
++  const { accessFeedback, stopFeedback } = h.load('../src/feedback.ts');
++  assert.equal(await accessFeedback(false, true, false, 'exit', 'Ana Pérez'), 'device');
++  assert.equal(messages[0].text, 'Acceso denegado, Ana Pérez.');
++  stopFeedback();
++  assert.equal(stopped, 2);
++});
++
++test('una voz de GymPASS lenta cede a la voz del teléfono en 250 ms y no suena después', async t => {
++  t.mock.timers.enable({ apis: ['setTimeout'] });
++  let ready!: () => void;
++  const prepared = new Promise<void>(resolve => { ready = resolve; });
++  const messages: string[] = [];
++  let played = 0;
++  class Audio { state = 'running'; decodeAudioData = async () => ({}); createBuffer() { played++; throw Error('Audio tardío'); } }
++  const h = componentHarness({ Worker: class {}, AudioContext: Audio, fetch: async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) }),
++    window: { __gympassNativeVoice: { speak: async (text: string) => { messages.push(text); return true; }, stop() {} } },
++  });
++  const { accessFeedback } = h.load('../src/feedback.ts', { './voice-engine': {
++    prepareGympassVoice: () => prepared,
++    renderGympassVoice: async () => ({ samples: Float32Array.of(0), sampleRate: 44100 }),
++  } });
++  const pending = accessFeedback(true, true, false, 'entry', 'Ana', { voiceURI: 'gympass:F1', voiceGender: 'female', voiceRate: 1 });
++  await h.settle();
++  assert.deepEqual(messages, []);
++  t.mock.timers.tick(250);
++  await h.settle();
++  assert.equal(await pending, 'device');
++  assert.deepEqual(messages, ['Entrando, Ana.']);
++  ready();
++  await h.settle();
++  assert.equal(played, 0);
++});

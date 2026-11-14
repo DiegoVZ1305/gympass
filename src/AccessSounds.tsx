@@ -38,8 +38,8 @@ export default function AccessSounds() {
   const voiceHint = recorded
     ? 'Tus grabaciones: «Acceso permitido» cuando el código es válido y «Acceso denegado» cuando no lo es o está vencido. Se reproducen sin añadir nombres.'
     : gympassVoice
-    ? 'La primera prueba descarga unos 110 MB. Después, la voz se genera en este dispositivo.'
-    : 'Elige una voz de GymPASS o usa las voces en español de tu dispositivo.';
+    ? 'La primera prueba descarga unos 110 MB. En recepción se usa una voz del dispositivo si la voz elegida tarda; los avisos generados se guardan para repetirlos al instante.'
+    : 'La voz automática prioriza voces locales para responder rápido. Las voces anuncian el nombre también cuando el acceso es denegado.';
   const cancelPreview = () => {
     previewId.current++;
     setTesting(false);
@@ -146,6 +146,7 @@ export default function AccessSounds() {
             <>
               <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('entry')}>Probar entrada</button>
               <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('exit')}>Probar salida</button>
+              <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('entry', false)}>Probar acceso denegado</button>
             </>
           )}
           {testing && <button type="button" className="btn secondary" onClick={cancelPreview}>Detener prueba</button>}

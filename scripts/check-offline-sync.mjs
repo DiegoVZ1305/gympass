@@ -126,6 +126,38 @@ const sale = (person_id, plan) => ({
   lines: [{ kind: "plan", id: plan.id, quantity: 1 }],
 });
 
+test('sin red: las sesiones vencen por fecha y la renovación se combina aunque queden sesiones anteriores', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-14T16:00:00Z') });
+  const f = await fixture(t);
+  let client;
+  try {
+    const seeded = await f.cloud(async s => {
+      const p = await s.savePerson(person('DEADLINE'));
+      const pos = new PosService(s);
+      const plan = await pos.savePlan({ name: '15 sesiones', unit: 'sessions', duration: 15, price_cents: 15000 });
+      const paid = await pos.checkout({ ...sale(p.id, plan), sessions_until: '2026-11-14' });
+      return { person: p, plan, card: await s.credentialCard(paid.credential.id) };
+    });
+    client = await f.local('Fechas sin red');
+    t.mock.timers.setTime(Date.parse('2026-11-15T16:00:00Z'));
+    const denied = await client.service().access({ code: seeded.card.code, direction: 'entry', request_id: crypto.randomUUID() });
+    assert.equal(denied.allowed, 0);
+    assert.equal(denied.reason, 'MEMBERSHIP_REQUIRED');
+    const renewed = await new PosService(client.service()).checkout({ ...sale(seeded.person.id, seeded.plan), sessions_until: '2026-12-14' });
+    assert.equal(renewed.memberships[0].sessions_remaining, 15);
+    await client.replica.synchronize();
+    assert.equal(client.replica.status().conflict, null);
+    await f.cloud(async s => {
+      const summary = await new PosService(s).memberships(seeded.person.id);
+      assert.equal(summary.sessions_remaining, 15);
+      assert.equal(summary.memberships.length, 2);
+    });
+  } finally {
+    if (client) { await client.replica.stop(); client.db.close(); }
+    await f.app.close();
+  }
+});
+
 test('un cliente anterior recibe su esquema y sus ediciones no borran los costos nuevos', async t => {
   const f = await fixture(t);
   try {
@@ -681,7 +713,7 @@ test("dos dispositivos no consumen dos veces la última sesión y las vinculacio
           duration: 1,
           price_cents: 1000,
         });
-      const payment = await pos.checkout(sale(p.id, plan));
+      const payment = await pos.checkout({ ...sale(p.id, plan), sessions_until: '2099-12-31' });
       return { person: p, card: await s.credentialCard(payment.credential.id) };
     });
     const a = await f.local("A"),

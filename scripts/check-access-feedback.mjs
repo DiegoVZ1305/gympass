@@ -2,14 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { accessPresentation, feedbackAnnouncement, feedbackSound, feedbackTiming, preferredSpanishVoice } from '../lib/access-feedback.ts';
 
-test('la voz anuncia el movimiento y el nombre, priorizando voces naturales en español', () => {
+test('la voz anuncia el movimiento y el nombre, priorizando voces locales en español', () => {
   assert.equal(feedbackAnnouncement('entry', '  Ana   Pérez  '), 'Entrando, Ana Pérez.');
   assert.equal(feedbackAnnouncement('exit', 'José Núñez'), 'Saliendo, José Núñez.');
   assert.equal(feedbackAnnouncement('entry'), 'Entrando.');
   const local = { name: 'Español', lang: 'es-BO', localService: true, default: true };
   const natural = { name: 'Microsoft Dalia Online (Natural)', lang: 'es-MX', localService: false, default: false };
   const english = { ...natural, name: 'English Neural', lang: 'en-US' };
-  assert.equal(preferredSpanishVoice([local, english, natural]), natural);
+  assert.equal(preferredSpanishVoice([local, english, natural]), local);
+  assert.equal(preferredSpanishVoice([local, natural], true, { voiceURI: 'es-MX:Microsoft Dalia Online (Natural)' }), natural);
+  assert.equal(feedbackAnnouncement('entry', ' Ana Pérez ', false), 'Acceso denegado, Ana Pérez.');
   assert.equal(preferredSpanishVoice([local, natural], false), local);
   assert.equal(preferredSpanishVoice([english]), undefined);
 });

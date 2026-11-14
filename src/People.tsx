@@ -12,10 +12,10 @@ import {
   ChevronRight,
   RotateCcw,
 } from 'lucide-react';
-import { api, upload, HttpError } from './api';
+import { api, HttpError } from './api';
 import { copyText, newRequestId } from './browser';
-import PhotoEditor from './PhotoEditor';
 import PersonMemberships from './PersonMemberships';
+import SessionDeadline from './SessionDeadline';
 import { logoUrl } from './branding';
 import ScopedImage from './ScopedImage';
 import ShareCredentialButton from './ShareCredentialButton';
@@ -29,7 +29,7 @@ import {
   type PersonSummary,
   type Credential,
 } from '../lib/domain';
-import { planEndDate, type PosCatalog, type PosPlan, type PosCheckout, type PosSaleDetail } from '../lib/pos-types';
+import { planEndDate, defaultSessionUntil, type PosCatalog, type PosPlan, type PosCheckout, type PosSaleDetail } from '../lib/pos-types';
 import { usePeople } from './usePeople';
 import { qrSvg } from '../lib/qr';
 import type { CardData } from '../lib/card';
@@ -55,10 +55,10 @@ export function PersonForm({
   onDone: () => Promise<void>;
   onClose: () => void;
 }) {
-  const [photo, setPhoto] = useState<Blob | null | undefined>(null);
   const [kind, setKind] = useState(person?.kind || 'member'),
     [plans, setPlans] = useState<PosPlan[] | null>(null),
     [planId, setPlanId] = useState(''),
+    [sessionsUntil, setSessionsUntil] = useState<string | null>(null),
     [planError, setPlanError] = useState(''),
     [uncertain, setUncertain] = useState(false),
     [registered, setRegistered] = useState(false);
@@ -67,6 +67,7 @@ export function PersonForm({
   const selectedPlan = !person && planHolder(kind) ? plans?.find((plan) => plan.id === planId) : undefined;
   const today = person ? data.today : localParts(new Date(), data.settings.timezone).date;
   const end = selectedPlan ? planEndDate(today, selectedPlan.unit, selectedPlan.duration) : null;
+  const deadline = selectedPlan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(today) : '';
   async function loadPlans(signal?: AbortSignal) {
     try {
       const catalog = await api<PosCatalog>('pos/catalog', 'GET', undefined, signal);
@@ -104,7 +105,6 @@ export function PersonForm({
                     : 'Registrar persona'
         }
         onSubmit={async (f) => {
-          if (photo === undefined) throw Error('Espera a que termine de prepararse la foto.');
           if (pending.current || (!savedId.current && selectedPlan)) {
             if (!pending.current) {
               if (f.get('status') !== 'active') throw Error('El socio debe estar activo para registrar un plan.');
@@ -122,6 +122,7 @@ export function PersonForm({
                 },
                 payment_method: f.get('payment_method') as PosCheckout['payment_method'],
                 expected_total_cents: selectedPlan!.price_cents,
+                ...(selectedPlan!.unit === 'sessions' ? { sessions_until: deadline } : {}),
                 lines: [
                   {
                     kind: 'plan',
@@ -161,16 +162,6 @@ export function PersonForm({
             savedId.current = saved.id;
             if (!person) setRegistered(true);
           }
-          if (photo) {
-            try {
-              await upload('people/' + savedId.current + '/photo', photo);
-            } catch (error) {
-              throw Error(
-                'La persona se guardó, pero la foto no pudo cargarse. Puedes reintentar sin duplicarla. ' +
-                  (error as Error).message,
-              );
-            }
-          }
           await onDone();
           onClose();
         }}
@@ -183,13 +174,10 @@ export function PersonForm({
         )}
         {registered && (
           <p className="helper" role="status">
-            El registro ya se guardó{selectedPlan ? ' junto con el cobro del plan' : ''}. Reintentar completa la foto y
-            la actualización de la lista sin volver a cobrar.
+            El registro ya se guardó{selectedPlan ? ' junto con el cobro del plan' : ''}. Reintentar actualiza la lista sin volver a cobrar.
           </p>
         )}
         <fieldset disabled={uncertain || registered}>
-          {person?.photo_path && <Avatar name={person.name} personId={person.id} photoPath={person.photo_path} />}
-          <PhotoEditor onChange={setPhoto} />
           <div className="form-grid">
             <Field label="Nombre completo">
               <input name="name" required maxLength={120} defaultValue={person?.name} placeholder="Nombre y apellido" />
@@ -261,6 +249,7 @@ export function PersonForm({
                 </select>
               </Field>
             )}
+            {selectedPlan?.unit === 'sessions' && <SessionDeadline start={today} value={deadline} onChange={setSessionsUntil} />}
           </div>
           {!person && planHolder(kind) && planError && (
             <p className="error-message" role="alert">
@@ -279,7 +268,7 @@ export function PersonForm({
             <div className="helper" aria-live="polite">
               <p>
                 {selectedPlan.unit === 'sessions'
-                  ? `${selectedPlan.duration} sesiones desde ${today}, sin vencimiento por fecha.`
+                  ? `${selectedPlan.duration} sesiones del ${today} al ${deadline}, inclusive.`
                   : `Válido del ${today} al ${nextDate(end!, -1)}, inclusive.`}
               </p>
               <p>
@@ -319,7 +308,7 @@ export function PersonForm({
                     : kind !== 'member'
                       ? 'El acceso del personal no vence con el plan. Ajusta su vencimiento editando la ficha.'
                       : selectedPlan.unit === 'sessions'
-                        ? 'El acceso depende de las sesiones disponibles, sin vencimiento por fecha.'
+                        ? 'El acceso depende de las sesiones disponibles y de su fecha límite.'
                         : 'Último día de acceso incluido en el plan. Se calcula automáticamente.'
                 }
               >
@@ -327,7 +316,7 @@ export function PersonForm({
                   <input
                     type="date"
                     name="expires"
-                    value={kind === 'member' && end ? nextDate(end, -1) : ''}
+                    value={kind === 'member' ? (selectedPlan.unit === 'sessions' ? deadline : end ? nextDate(end, -1) : '') : ''}
                     readOnly
                   />
                 ) : (

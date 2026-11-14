@@ -132,7 +132,7 @@ test('las copias antiguas se amplían con NULL; el formato compatible conserva e
     const check = new DatabaseSync(':memory:');
     try { check.exec(table.sql!); } finally { check.close(); }
   }
-  const upgraded = upgradeManagementSnapshot({ tables: legacy } as SyncSnapshot);
+  const upgraded = upgradeManagementSnapshot({ tables: legacy, triggers: [] } as unknown as SyncSnapshot);
   for (const table of upgraded.tables) {
     assert.ok(table.columns.some(column => column.name === 'cost_cents'));
     const check = new DatabaseSync(':memory:');

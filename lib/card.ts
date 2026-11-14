@@ -12,6 +12,7 @@ export type CardData = {
   code: string;
   expires: string | null;
   access_note?: string;
+  plan_name?: string;
   valid_on?: string;
   /** A data: URI for the person's photo, or null to draw initials instead. */
   photo?: string | null;
@@ -104,9 +105,6 @@ export function cardSvg(card: CardData) {
 
   const qrX = (width - qrBox) / 2;
   const qrY = 654;
-  const photoSize = 150;
-  const photoX = (width - photoSize) / 2;
-  const photoY = 176;
   const validity = card.valid_on
     ? `Válida solo el ${card.valid_on}`
     : card.access_note
@@ -117,7 +115,6 @@ export function cardSvg(card: CardData) {
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Credencial de ${escapeXml(card.name)}">
   <defs>
-    <clipPath id="photoClip"><circle cx="${width / 2}" cy="${photoY + photoSize / 2}" r="${photoSize / 2}"/></clipPath>
     <filter id="watermarkGray"><feColorMatrix type="saturate" values="0"/></filter>
   </defs>
   <rect width="${width}" height="${height}" rx="34" fill="#ffffff"/>
@@ -128,13 +125,9 @@ export function cardSvg(card: CardData) {
   <image x="${width / 2 - 120}" y="16" width="240" height="58" href="${gympassLogo}" aria-label="GymPASS"/>
   <text x="${width / 2}" y="100" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="22" fill="#ffffff" opacity="0.9">${escapeXml(fit(card.organization, 38))}</text>
 
-  ${
-    card.photo
-      ? `<image href="${escapeXml(card.photo)}" x="${photoX}" y="${photoY}" width="${photoSize}" height="${photoSize}" preserveAspectRatio="xMidYMid slice" clip-path="url(#photoClip)"/>`
-      : `<circle cx="${width / 2}" cy="${photoY + photoSize / 2}" r="${photoSize / 2}" fill="#eef1f4"/>
-         <text x="${width / 2}" y="${photoY + photoSize / 2 + 20}" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="56" font-weight="650" fill="${accent}">${escapeXml(initials(card.name))}</text>`
-  }
-  <circle cx="${width / 2}" cy="${photoY + photoSize / 2}" r="${photoSize / 2}" fill="none" stroke="#dfe3e8" stroke-width="3"/>
+  <text x="${width / 2}" y="206" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700" fill="#5b6471" letter-spacing="2">PLAN</text>
+  ${invitationLines(card.plan_name || 'Sin plan vigente', 28, 2).map((line, index) =>
+    `<text x="${width / 2}" y="${258 + index * 40}" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="32" font-weight="700" fill="${accent}">${escapeXml(line)}</text>`).join('')}
 
   <text x="${width / 2}" y="378" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#5b6471" letter-spacing="2.4">${escapeXml(fit((card.label || 'CREDENCIAL').toUpperCase(), 40))}</text>
   ${invitationLines(card.name, 28, 2)

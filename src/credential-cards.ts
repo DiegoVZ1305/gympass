@@ -1,5 +1,5 @@
 import { api } from './api';
-import { inlineLogo, inlinePhoto } from './card-download';
+import { inlineLogo } from './card-download';
 import { kindLabels, type Settings } from '../lib/domain';
 import { displayBrandColor } from '../lib/branding';
 import type { CardData } from '../lib/card';
@@ -20,6 +20,7 @@ export async function credentialCardData(
     person_id: string;
     photo_path: string | null;
     code: string;
+    plan_name?: string;
   }>('credentials/' + encodeURIComponent(id) + '/card', 'GET', undefined, signal);
   return {
     name: row.name,
@@ -28,12 +29,12 @@ export async function credentialCardData(
     organization: settings.name,
     expires: null,
     access_note: 'Acceso según el plan vigente',
+    plan_name: row.plan_name || 'Sin plan vigente',
     code: row.code,
     accent: settings.credential_color || displayBrandColor(settings.brand_color),
     header: settings.credential_color,
     watermark_size: settings.credential_watermark_size,
     watermark: settings.logo_path ? await inlineLogo(settings.logo_path) : null,
     label: 'Credencial permanente',
-    photo: row.photo_path ? await inlinePhoto(row.person_id) : null,
   };
 }

@@ -4,6 +4,7 @@ import { Plus, Minus, Trash2, Printer, Pencil, Package, ChevronLeft, ChevronRigh
 import type { Bootstrap, PersonSummary } from '../lib/domain';
 import {
   planEndDate,
+  defaultSessionUntil,
   type PosCatalog,
   type PosCheckout,
   type PlanGate,
@@ -18,6 +19,7 @@ import { api, NetworkError, HttpError } from './api';
 import { usePeople } from './usePeople';
 import { newRequestId } from './browser';
 import PersonMemberships from './PersonMemberships';
+import SessionDeadline from './SessionDeadline';
 import PosReports from './PosReports';
 import ShareCredentialButton from './ShareCredentialButton';
 import { Badge, Empty, Field, Form, Modal, RecordList, Skeleton, type Notify } from './ui';
@@ -71,6 +73,7 @@ export function Checkout({
     [newMember, setNewMember] = useState<PosCheckout['new_member']>(recovered?.payload.new_member),
     [registerOpen, setRegisterOpen] = useState(false),
     [start, setStart] = useState(recovered?.payload.start_date || data.today),
+    [sessionsUntil, setSessionsUntil] = useState<string | null>(recovered?.payload.sessions_until ?? null),
     [method, setMethod] = useState<PaymentMethod>(recovered?.payload.payment_method || 'cash'),
     [uncertain, setUncertain] = useState(!!recovered),
     [submitting, setSubmitting] = useState(false),
@@ -101,6 +104,9 @@ export function Checkout({
   }, [uncertain, submitting]);
   const people = usePeople({ q: personQuery, kind: 'member', page: personPage, limit: 20 });
   const hasPlan = cart.some((line) => line.kind === 'plan');
+  const hasSessions = cart.some((line) => line.kind === 'plan' && catalog.plans.find((plan) => plan.id === line.id)?.unit === 'sessions');
+  const sessionStart = newMember ? data.today : start;
+  const deadline = hasSessions ? sessionsUntil ?? defaultSessionUntil(sessionStart || data.today) : '';
   useEffect(() => {
     if (hasPlan) return;
     setNewMember(undefined);
@@ -261,6 +267,7 @@ export function Checkout({
                   : {}),
                 payment_method: method,
                 expected_total_cents: total,
+                ...(hasSessions ? { sessions_until: deadline } : {}),
                 lines: cart.map((line) => ({
                   ...line,
                   ...(line.kind === 'plan'
@@ -544,6 +551,7 @@ export function Checkout({
                 ))}
               </select>
             </Field>
+            {hasSessions && <SessionDeadline start={sessionStart} value={deadline} onChange={setSessionsUntil} />}
             {hasPlan && (
               <div className="pos-validity" aria-live="polite">
                 {cart
@@ -559,7 +567,7 @@ export function Checkout({
                         </strong>
                         <br />
                         {plan.unit === 'sessions'
-                          ? `${plan.duration * line.quantity} sesiones desde ${start || 'la fecha elegida'}, sin vencimiento`
+                          ? `${plan.duration * line.quantity} sesiones del ${sessionStart} al ${deadline}, inclusive`
                           : start && end
                             ? `Válido del ${start} al ${lastValidDate(end)}, inclusive`
                             : 'Elige una fecha de inicio válida.'}
@@ -909,7 +917,7 @@ export function SaleReceipt({
           <p key={membership.id}>
             {membership.name} ·{' '}
             {membership.unit === 'sessions'
-              ? `${membership.sessions_total} sesiones desde ${membership.start_date}`
+              ? `${membership.sessions_total} sesiones desde ${membership.start_date}${membership.end_date ? ` hasta ${lastValidDate(membership.end_date)}` : ''}`
               : `${membership.start_date} al ${membership.end_date ? lastValidDate(membership.end_date) : 'sin vencimiento'}`}
           </p>
         ))}

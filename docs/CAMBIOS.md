@@ -1,5 +1,15 @@
 # Cambios
 
+## 5.4.0
+
+- Registro y edición de socios sin foto. Las listas y resultados de acceso usan iniciales; las fotos anteriores se conservan en los datos sin mostrarlas.
+- Fecha límite obligatoria al cobrar un paquete de sesiones, desde el alta, la ficha o Caja. Se propone un mes y se permite elegir otro último día incluido. La entrada exige sesiones disponibles y fecha vigente; una salida pendiente sigue permitida.
+- Los paquetes vencidos permiten comprar otro plan aunque conserven sesiones. La migración 026 y la actualización de las copias Android aplican la misma regla sin borrar cobros ni accesos. Los paquetes históricos sin fecha conservan las condiciones con las que se vendieron.
+- La credencial muestra el nombre del plan vigente al generarla, descargarla, imprimirla o compartirla. El QR sigue siendo permanente. Una imagen ya enviada conserva el plan impreso: al cambiarlo, descarga o comparte de nuevo la tarjeta.
+- Las voces anuncian «Acceso denegado» y el nombre. La selección automática prioriza voces locales; si el generador de GymPASS tarda más de 250 ms, usa la voz del dispositivo y conserva la generación en caché para otra lectura. La pantalla permite probar el rechazo con nombre.
+- Android incorpora la voz nativa del teléfono para los avisos con nombre en su vista de gestión. Necesita una voz española instalada en el sistema; las grabaciones siguen disponibles sin síntesis.
+- Web, Android y Windows en 5.4.0, con instalador, portable y APK; Android conserva paquete y certificado y usa código 5400.
+
 ## 5.3.2
 
 - El panel del superadministrador muestra **Socios registrados** en cada tarjeta de gimnasio, también en las vistas de archivados y dados de baja. El total se consulta al abrir o actualizar la lista.

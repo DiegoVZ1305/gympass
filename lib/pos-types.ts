@@ -1,4 +1,9 @@
 import type { ProductMargin } from './product-costs.ts';
+export function defaultSessionUntil(start: string) {
+  const end = new Date(planEndDate(start, 'months', 1)! + 'T12:00:00Z');
+  end.setUTCDate(end.getUTCDate() - 1);
+  return end.toISOString().slice(0, 10);
+}
 export type PlanUnit = 'days' | 'months' | 'sessions';
 export function planEndDate(start: string, unit: PlanUnit, duration: number): string | null {
   if (unit === 'sessions') return null;
@@ -54,6 +59,8 @@ export type PosCheckout = {
     notes?: string;
   };
   start_date?: string;
+  /** Último día incluido para completar un plan por sesiones. */
+  sessions_until?: string;
   replace_active?: { reason: string };
   payment_method: PaymentMethod;
   lines: PosLineInput[];

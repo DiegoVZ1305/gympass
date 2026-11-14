@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
 import {
   planEndDate,
+  defaultSessionUntil,
   type MembershipSummary,
   type PlanGate,
   type PosCatalog,
@@ -12,6 +13,7 @@ import {
 } from '../lib/pos-types';
 import { nextDate } from '../lib/domain';
 import { api } from './api';
+import SessionDeadline from './SessionDeadline';
 import { newRequestId } from './browser';
 import { Badge, Empty, Field, Form, Skeleton } from './ui';
 import './styles/pos.css';
@@ -29,6 +31,7 @@ const day = (value: string) =>
 function state(membership: PosMembership, today: string) {
   if (membership.status === 'void') return 'Anulado';
   if (membership.start_date > today) return 'Próximo';
+  if (membership.end_date && today >= membership.end_date) return 'Vencido';
   if (membership.unit === 'sessions') return membership.sessions_remaining ? 'Disponible' : 'Agotado';
   return membership.end_date && today >= membership.end_date ? 'Vencido' : 'Vigente';
 }
@@ -151,7 +154,7 @@ export default function PersonMemberships({
                 </div>
                 <p className="membership-dates">
                   {membership.unit === 'sessions'
-                    ? `${membership.sessions_remaining} de ${membership.sessions_total} sesiones · desde el ${day(membership.start_date)}`
+                    ? `${membership.sessions_remaining} de ${membership.sessions_total} sesiones · desde el ${day(membership.start_date)}${membership.end_date ? ` hasta el ${day(lastDay(membership.end_date))}` : ''}`
                     : membership.end_date
                       ? `Del ${day(membership.start_date)} al ${day(lastDay(membership.end_date))}`
                       : `Desde el ${day(membership.start_date)}, sin vencimiento`}
@@ -188,6 +191,7 @@ export function AddPlan({ personId, today, onDone }: { personId: string; today: 
     [plans, setPlans] = useState<PosPlan[] | null>(null),
     [planId, setPlanId] = useState(''),
     [start, setStart] = useState(today),
+    [sessionsUntil, setSessionsUntil] = useState<string | null>(null),
     [gate, setGate] = useState<PlanGate | null>(null),
     [loading, setLoading] = useState(false),
     [error, setError] = useState('');
@@ -217,6 +221,7 @@ export function AddPlan({ personId, today, onDone }: { personId: string; today: 
   }, [open, personId, today]);
   const plan = plans?.find((item) => item.id === planId);
   const end = plan && start ? planEndDate(start, plan.unit, plan.duration) : null;
+  const deadline = plan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(start || today) : '';
   if (!open)
     return (
       <button className="btn secondary" onClick={() => setOpen(true)}>
@@ -243,6 +248,7 @@ export function AddPlan({ personId, today, onDone }: { personId: string; today: 
             request_id: newRequestId(),
             person_id: personId,
             start_date: start,
+            ...(plan.unit === 'sessions' ? { sessions_until: deadline } : {}),
             payment_method: form.get('payment_method') as PosCheckout['payment_method'],
             expected_total_cents: plan.price_cents,
             lines: [
@@ -292,6 +298,7 @@ export function AddPlan({ personId, today, onDone }: { personId: string; today: 
               <option value="card">Tarjeta</option>
             </select>
           </Field>
+          {plan?.unit === 'sessions' && <SessionDeadline start={start} value={deadline} onChange={setSessionsUntil} />}
         </div>
         {loading && (
           <p className="helper" role="status">
@@ -315,7 +322,7 @@ export function AddPlan({ personId, today, onDone }: { personId: string; today: 
         {plan && (
           <p className="helper" aria-live="polite">
             {plan.unit === 'sessions'
-              ? `${plan.duration} sesiones desde ${start}, sin vencimiento por fecha.`
+              ? `${plan.duration} sesiones del ${start} al ${deadline}, inclusive.`
               : `Válido del ${start} al ${nextDate(end!, -1)}, inclusive.`}{' '}
             El cobro queda registrado hoy. El nuevo plan empieza en la fecha indicada sin cortar el plan vigente.
           </p>

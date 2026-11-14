@@ -7,6 +7,7 @@ import * as feedback from '../lib/access-feedback.ts';
 import * as voiceCatalog from '../lib/voice-catalog.ts';
 import * as backupLimits from '../lib/backup-limits.ts';
 import * as accent from '../lib/accent.ts';
+import * as posTypes from '../lib/pos-types.ts';
 
 export type Element = { type: unknown; props: Record<string, any> };
 
@@ -117,11 +118,12 @@ export function componentHarness(globals: Record<string, unknown> = {}) {
         if (/lib\/voice-catalog$/.test(name)) return voiceCatalog;
         if (/lib\/backup-limits$/.test(name)) return backupLimits;
         if (/lib\/accent$/.test(name)) return accent;
+        if (/lib\/pos-types$/.test(name)) return { ...posTypes, ...(dependencies[name] || {}) };
         if (name in dependencies) {
           const dependency = dependencies[name];
           return dependency && 'default' in dependency ? { __esModule: true, ...dependency } : dependency;
         }
-        if (['./ConnectionStatus', './ServerAccessLink', './PasswordInput', './ThemeToggle'].includes(name))
+        if (['./ConnectionStatus', './ServerAccessLink', './PasswordInput', './ThemeToggle', './SessionDeadline'].includes(name))
           return { __esModule: true, default: name.slice(2) };
         throw Error(`Dependencia no configurada: ${name}`);
       },

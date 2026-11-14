@@ -6,9 +6,9 @@ export const feedbackTiming = { enter: 180, hold: 3520, exit: 300, total: 4000, 
 export function feedbackSound(event: Pick<AccessEvent, 'allowed' | 'direction'>) {
   return !event.allowed ? 'denied' : event.direction === 'exit' ? 'exit' : 'entry';
 }
-export function feedbackAnnouncement(direction: string, personName = '') {
+export function feedbackAnnouncement(direction: string, personName = '', allowed = true) {
   const name = personName.trim().replace(/\s+/g, ' ');
-  return `${direction === 'exit' ? 'Saliendo' : 'Entrando'}${name ? `, ${name}` : ''}.`;
+  return `${!allowed ? 'Acceso denegado' : direction === 'exit' ? 'Saliendo' : 'Entrando'}${name ? `, ${name}` : ''}.`;
 }
 
 export type VoiceGender = 'auto' | 'female' | 'male';
@@ -46,7 +46,7 @@ export function isNaturalVoice(voice: FeedbackVoice) {
 export function preferredSpanishVoice<T extends FeedbackVoice>(voices: T[], online = true, choice: Partial<VoiceSettings> = {}): T | undefined {
   const score = (voice: T) => {
     const language = voice.lang.replaceAll('_', '-').toLowerCase();
-    return (isNaturalVoice(voice) ? 100 : 0) +
+    return (voice.localService ? 200 : 0) + (isNaturalVoice(voice) ? 100 : 0) +
       (/google/i.test(voice.name) ? 40 : 0) +
       (!voice.localService ? 20 : 0) +
       (language === 'es-bo' ? 15 : language === 'es-mx' || language === 'es-419' ? 10 : 0) +

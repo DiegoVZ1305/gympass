@@ -118,7 +118,7 @@ test('el aviso usa la voz exacta y la velocidad seleccionadas', async (t) => {
   assert.equal(f.spoken[0].text, 'Saliendo, José Núñez.');
   f.api.accessFeedback(true, true, false, 'entry', 'José Núñez', { voiceURI: '', voiceGender: 'male', voiceRate: 0.98 });
   await f.settle();
-  assert.equal(f.spoken[1].voice, jorge);
+  assert.equal(f.spoken[1].voice, raul);
 });
 
 test('si falla la voz en línea, intenta una voz local del mismo tipo antes de usar el tono', async (t) => {
@@ -155,12 +155,12 @@ test('las voces tardías sólo anuncian el último acceso y silenciar cancela el
   assert.deepEqual(f.tones, []);
 });
 
-test('el acceso denegado conserva su tono y nunca anuncia una entrada', async (t) => {
+test('el acceso denegado pronuncia el nombre sin anunciar una entrada', async (t) => {
   const f = fixture(t);
   f.api.accessFeedback(false, true, true, 'entry', 'Ana');
   await f.settle();
-  assert.deepEqual(f.spoken, []);
-  assert.deepEqual(f.tones, ['/sounds/denied.wav']);
+  assert.equal(f.spoken[0].text, 'Acceso denegado, Ana.');
+  assert.deepEqual(f.tones, []);
   assert.deepEqual(f.vibration.map(String), ['100,60,100']);
 });
 
@@ -202,7 +202,7 @@ test('un motor que falla sin avisar se cancela y reproduce el tono de confirmaci
   await f.settle();
   assert.deepEqual(f.tones, []);
   const before = f.cancellations;
-  t.mock.timers.tick(3000);
+  t.mock.timers.tick(800);
   await f.settle();
   assert.equal(f.cancellations, before + 1);
   assert.deepEqual(f.tones, ['/sounds/entry.wav']);
@@ -212,7 +212,7 @@ test('si la lista de voces no carga, se intenta la voz predeterminada en españo
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = fixture(t, { delayedVoices: true });
   f.api.accessFeedback(true, true, false, 'exit', 'Ana');
-  t.mock.timers.tick(700);
+  t.mock.timers.tick(150);
   await f.settle();
   assert.equal(f.spoken[0].text, 'Saliendo, Ana.');
   assert.equal(f.spoken[0].lang, 'es-BO');

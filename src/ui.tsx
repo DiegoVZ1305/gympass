@@ -1,5 +1,3 @@
-import { apiUrl } from './platform-context';
-import ScopedImage from './ScopedImage';
 import PasswordInput from './PasswordInput';
 import {
   Children,
@@ -241,15 +239,6 @@ export function Avatar({
   personId?: string | null;
   photoPath?: string | null;
 }) {
-  if (personId && photoPath)
-    return (
-      <ScopedImage
-        className="avatar person-photo"
-        src={apiUrl('people/' + encodeURIComponent(personId) + '/photo?v=' + encodeURIComponent(photoPath))}
-        alt={'Foto de ' + name}
-        loading="lazy"
-      />
-    );
   return (
     <span className="avatar">
       {name

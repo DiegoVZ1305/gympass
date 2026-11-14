@@ -1,4 +1,5 @@
 import { appearanceColumns } from './gym-appearance.ts';
+import { sessionDeadlineTriggers } from './session-deadlines.ts';
 import { productCostColumnSql, productCostTables } from './product-costs.ts';
 export { productCostColumnSql, productCostTables };
 export type SyncValue = string | number | null;
@@ -46,7 +47,10 @@ export function upgradeAppearanceSnapshot(snapshot: SyncSnapshot): SyncSnapshot 
 /** Extend older cached copies without assigning a fabricated purchase cost. */
 export function upgradeManagementSnapshot(snapshot: SyncSnapshot): SyncSnapshot {
   const appearance = upgradeAppearanceSnapshot(snapshot);
-  return { ...appearance, tables: appearance.tables.map(table => {
+  return { ...appearance, triggers: appearance.triggers.map(sql => {
+    const name = /CREATE TRIGGER (pos_one_plan|pos_access_use)\b/i.exec(sql)?.[1] as keyof typeof sessionDeadlineTriggers | undefined;
+    return name ? sessionDeadlineTriggers[name] : sql;
+  }), tables: appearance.tables.map(table => {
     if (!productCostTables.some(name => name === table.name) || table.columns.some(column => column.name === 'cost_cents')) return table;
     const sql = table.sql && !/\bcost_cents\b/.test(table.sql)
       ? table.sql.replace(/\)\s*$/, ', cost_cents ' + productCostColumnSql + ')') : table.sql;

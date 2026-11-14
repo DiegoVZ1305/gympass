@@ -35,6 +35,7 @@ async function fixture(t, existing = true) {
 test('el mismo QR vence, permanece bloqueado dos semanas y vuelve a servir desde la fecha del nuevo pago', async t => {
   const { service, qr, sell, scan, count } = await fixture(t);
   const first = await sell();
+  assert.equal((await service.credentialCard(qr.id)).plan_name, 'Mensual');
   assert.equal(first.credential.id, qr.id);
   assert.equal((await scan(qr.code, '2026-02-01T03:59:59Z')).allowed, 1);
   await scan(qr.code, '2026-02-01T03:59:59Z', 'exit');

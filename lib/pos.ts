@@ -74,6 +74,7 @@ const checkoutSchema = z.object({
     .extend({ kind: z.enum(['member', 'employee']), status: z.literal('active'), expires: z.null().default(null) })
     .optional(),
   start_date: date.optional(),
+  sessions_until: date.optional(),
   // Solo el administrador: da de baja el plan en curso del socio para vender uno nuevo.
   replace_active: z.object({ reason: z.string().trim().min(3).max(300) }).optional(),
   payment_method: z.enum(['cash', 'transfer', 'card']),
@@ -254,6 +255,7 @@ export class PosService {
       expected_total_cents: p.expected_total_cents ?? null,
       person_id: p.person_id || null,
       start_date: p.start_date || null,
+      ...(p.sessions_until ? { sessions_until: p.sessions_until } : {}),
       ...(p.replace_active ? { replace_active: p.replace_active.reason } : {}),
       payment_method: p.payment_method,
       lines: p.lines,
@@ -303,6 +305,8 @@ export class PosService {
           line.id,
         );
         if (!item || !item.active) throw new ApiError(409, 'El producto o plan ya no está disponible.');
+        if (line.kind === 'plan' && item.unit === 'sessions' && (!p.sessions_until || p.sessions_until < start))
+          throw new ApiError(400, 'Indica la fecha límite para completar las sesiones, igual o posterior al inicio del plan.');
         if (
           line.kind === 'plan' &&
           line.expected_plan &&
@@ -388,7 +392,7 @@ export class PosService {
               item.duration,
               item.price_cents,
               start,
-              planEndDate(start, item.unit, item.duration),
+              item.unit === 'sessions' ? nextDate(p.sessions_until!, 1) : planEndDate(start, item.unit, item.duration),
               item.unit === 'sessions' ? item.duration : null,
               item.unit === 'sessions' ? item.duration : null,
               now,
@@ -605,9 +609,10 @@ export class PosService {
   async planGate(personId: string, today: string): Promise<PlanGate> {
     const rows = (await this.service.all(
       `SELECT name,unit,start_date,end_date,sessions_remaining FROM pos_memberships
-       WHERE person_id=? AND status='active' AND ((unit<>'sessions' AND end_date>?) OR (unit='sessions' AND sessions_remaining>0))
+       WHERE person_id=? AND status='active' AND ((unit<>'sessions' AND end_date>?) OR (unit='sessions' AND sessions_remaining>0 AND (end_date IS NULL OR end_date>?)))
        ORDER BY start_date,created_at,rowid`,
       personId,
+      today,
       today,
     )) as {
       name: string;
@@ -636,7 +641,7 @@ export class PosService {
     if (sessions)
       return {
         state: 'blocked',
-        message: `Ya tiene «${sessions.name}» con ${sessions.sessions_remaining} sesión(es) disponibles. Podrá comprar otro plan cuando las agote.`,
+        message: `Ya tiene «${sessions.name}» con ${sessions.sessions_remaining} sesión(es) disponibles${sessions.end_date ? ` hasta el ${nextDate(sessions.end_date, -1)}` : ''}. Podrá comprar otro plan cuando las agote o venza el plazo.`,
       };
     const queued = rows.find((row) => row.start_date > today);
     if (queued)
@@ -660,8 +665,8 @@ export class PosService {
       'SELECT * FROM pos_memberships WHERE person_id=? ORDER BY created_at DESC,rowid DESC',
       id,
     )) as PosMembership[];
-    const active = memberships.filter((m) => m.status === 'active' && m.start_date <= today);
-    const temporal = active.filter((m) => m.end_date && m.end_date > today);
+    const active = memberships.filter((m) => m.status === 'active' && m.start_date <= today && (!m.end_date || m.end_date > today));
+    const temporal = active.filter((m) => m.end_date && (m.unit !== 'sessions' || (m.sessions_remaining || 0) > 0));
     const sessions = active.reduce((sum, m) => sum + (m.sessions_remaining || 0), 0);
     const legacyValid = person.legacy_access === 1 && person.expires && person.expires >= today && !memberships.some((m) => m.start_date <= today);
     const managed = (person.legacy_access !== 1 || memberships.length > 0) && !legacyValid;

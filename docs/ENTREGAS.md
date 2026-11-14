@@ -8,7 +8,7 @@ GitHub Actions publica el mismo `dist/` generado y verificado en su trabajo de c
 
 ## Retención de recursos
 
-Se distribuyen dos conjuntos: el actual y el descrito en `web-releases/previous.json`. Para 5.3.2 se conserva el grafo completo publicado de 5.3.1. Esto permite que sus pestañas abiertas soliciten sus pantallas diferidas tras actualizar. Las sesiones de versiones anteriores deben recargarse.
+Se distribuyen dos conjuntos: el actual y el descrito en `web-releases/previous.json`. Para 5.4.0 se conserva el grafo completo publicado de 5.3.2. Esto permite que sus pestañas abiertas soliciten sus pantallas diferidas tras actualizar. Las sesiones de versiones anteriores deben recargarse.
 
 Los lectores QR referenciados por clientes existentes se conservan además en `web-releases/compatibility.json`. La compilación entrega **todos** los recursos emitidos por Vite y valida las importaciones de JavaScript mediante su árbol de sintaxis, incluidas las cadenas entre comillas invertidas. No se eliminan archivos de la compilación actual basándose en una búsqueda textual.
 
@@ -24,6 +24,8 @@ Para preparar una versión posterior:
 La compilación comprueba las huellas de los recursos retenidos, genera y comprime la nueva interfaz en staging y solo entonces actualiza `dist/`. Los archivos obsoletos se eliminan únicamente de `dist/assets/`. Los APK y EXE se alojan en GitHub Releases; `dist/descargas/` deja de contener instaladores antiguos.
 
 ## Android y Windows
+
+La entrega 5.4.0 recompila ambos clientes. El parche `client-releases/5.4.0-native.patch` se aplica sobre las fuentes nativas 5.3.0 con `git apply --check --ignore-space-change --directory=acceso pagina/gympass/client-releases/5.4.0-native.patch`, desde `GymPASS/`, y después con el mismo comando sin `--check`. Incluye las fuentes compartidas actualizadas de 5.3.1/5.3.2, la migración 026, las pruebas y la voz nativa Android. El runtime de Windows incorpora los trabajadores de respaldo y de conteo, con sus importaciones adaptadas a JavaScript.
 
 Las entregas 5.3.1 y 5.3.2 cambian web y servidor y conservan el protocolo de las aplicaciones 5.3.0. No requieren recompilar instaladores ni cambiar los enlaces de esa entrega. Las comprobaciones de sincronización incluyen el esquema de clientes anteriores.
 
