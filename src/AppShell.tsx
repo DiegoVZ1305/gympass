@@ -20,6 +20,7 @@ import { Avatar, type Notify } from './ui';
 import { sectionOf, sectionsFor, type Page, type SectionId } from './navigation';
 import MobileNavigation from './MobileNavigation';
 import Alerts from './Alerts';
+import Support from './Support';
 import BrandLogo from './BrandLogo';
 import ConnectionStatus from './ConnectionStatus';
 import ThemeToggle from './ThemeToggle';
@@ -237,6 +238,7 @@ export default function AppShell({
           <div className="topbar-right">
             <ConnectionStatus platform={!!data.platform} replica={!!data.replica?.linked} />
             <Alerts timezone={data.settings.timezone} />
+            <Support version={data.version} />
             <ThemeToggle />
             <button
               className="icon-btn"

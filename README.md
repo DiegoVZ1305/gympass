@@ -1,4 +1,4 @@
-# GymPASS 5.5.0
+# GymPASS 5.5.1
 
 Plataforma para socios, planes, caja y control de acceso. La web, Android y Windows se publican con la misma versión.
 
@@ -39,6 +39,8 @@ Los cambios de `main` se verifican antes de desplegarse cuando `NAMECHEAP_DEPLOY
 Se conservan los recursos web de la versión actual y de la inmediatamente anterior para las sesiones abiertas. Las versiones más antiguas se retiran del despliegue público; los instaladores históricos permanecen en GitHub Releases. Consulta [la política de entregas](docs/ENTREGAS.md).
 
 ## Uso
+
+El bot?n de WhatsApp junto a la campana abre los contactos de Diego Vargas (+591 62629717) y Mateo Bazoberry (+591 76738942). El gimnasio cierra las presencias pendientes a las 23:59 de su zona horaria; las salidas autom?ticas quedan identificadas como estimadas en el historial.
 
 El inicio guía al administrador para registrar un socio, crear y cobrar un plan, entregar su QR y registrar la entrada. El QR es permanente; el acceso depende de la vigencia o sesiones del plan pagado. Renovar no cambia la credencial.
 

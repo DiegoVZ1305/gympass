@@ -1,0 +1,539 @@
+--- a/desktop/package.json
++++ b/desktop/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "gympass-desktop",
+   "productName": "GymPASS",
+-  "version": "5.5.0",
++  "version": "5.5.1",
+   "description": "Entradas, salidas y tiempos de permanencia para gimnasios",
+   "author": "GymPASS",
+   "license": "UNLICENSED",
+--- a/mobile/app.json
++++ b/mobile/app.json
+@@ -6,12 +6,12 @@
+       "ios",
+       "android"
+     ],
+-    "version": "5.5.0",
++    "version": "5.5.1",
+     "orientation": "default",
+     "userInterfaceStyle": "automatic",
+     "ios": {
+       "bundleIdentifier": "local.gympass.controlacceso.mobile",
+-      "buildNumber": "5500",
++      "buildNumber": "5510",
+       "supportsTablet": true,
+       "infoPlist": {
+         "NSLocalNetworkUsageDescription": "GymPASS se conecta con la computadora de la misma red Wi-Fi para registrar accesos.",
+@@ -24,7 +24,7 @@
+     },
+     "android": {
+       "package": "local.gympass.controlacceso.mobile",
+-      "versionCode": 5500,
++      "versionCode": 5510,
+       "permissions": [
+         "android.permission.CAMERA"
+       ],
+--- a/mobile/package-lock.json
++++ b/mobile/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "gympass-mobile",
+-  "version": "5.5.0",
++  "version": "5.5.1",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "gympass-mobile",
+-      "version": "5.5.0",
++      "version": "5.5.1",
+       "dependencies": {
+         "@noble/ciphers": "2.4.0",
+         "expo": "~58.0.21",
+--- a/mobile/package.json
++++ b/mobile/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "gympass-mobile",
+-  "version": "5.5.0",
++  "version": "5.5.1",
+   "private": true,
+   "type": "module",
+   "main": "index.ts",
+--- a/mobile/src/offline.ts
++++ b/mobile/src/offline.ts
+@@ -43,6 +43,7 @@
+   error: string;
+   revoked: boolean;
+   conflict: string | null;
++  daily_closing_policy?: 1;
+ };
+ type Configuration = { id: string; token: string; management?: boolean };
+ function assetChanges(before: Record<string, string> = {}, after: Record<string, string> = {}) {
+@@ -203,6 +204,7 @@
+         await client.install(await client.remote<SyncSnapshot>('snapshot'));
+       }
+     }
++    await client.activateDailyClosing();
+     client.timer = setInterval(() => void client.synchronize(), 10000);
+     void client.synchronize();
+     return client;
+@@ -244,6 +246,17 @@
+         await this.db.execAsync(`BEGIN IMMEDIATE; DROP TRIGGER "${trigger.name}"; ${sql}; COMMIT;`);
+       }
+     }
++  }
++  private async activateDailyClosing() {
++    if (this.state.daily_closing_policy === 1) return;
++    await this.db.runAsync("UPDATE settings SET closing_time='23:59' WHERE id=1");
++    // Readers cannot edit settings in the cloud; this is a local policy upgrade.
++    if (this.state.base.scope !== 'management')
++      this.state.base = { ...this.state.base, tables: this.state.base.tables.map(table => table.name !== 'settings' ? table : {
++        ...table, rows: table.rows.map(row => ({ ...row, closing_time: '23:59' })),
++      }) };
++    this.state.daily_closing_policy = 1;
++    await this.save();
+   }
+   private async install(snapshot: SyncSnapshot) {
+     snapshot = upgradeManagementSnapshot(snapshot);
+@@ -310,6 +323,7 @@
+         conflict: null,
+         last_success: Date.now(),
+         last_clock: Date.now(),
++        daily_closing_policy: previous?.daily_closing_policy,
+       };
+       await this.save();
+       await this.db.execAsync('COMMIT');
+@@ -360,12 +374,12 @@
+       }
+       if (first === 'health') return { data: { ok: true, mode: 'mobile', offline: !this.online } };
+       if (first === 'auth' && id === 'status') return { data: { setupRequired: false, user: this.session.user } };
+-      if (first === 'system-info') return { data: { version: '5.3.0', desktop: false, mode: 'mobile' } };
++      if (first === 'system-info') return { data: { version: '5.5.1', desktop: false, mode: 'mobile' } };
+       if (first === 'bootstrap') {
+         let maintain = true; try { this.writable(); } catch { maintain = false; }
+         const data = await s.bootstrap({ compact: url.searchParams.get('compact') === '1', maintain });
+         if (maintain) { this.state.last_clock = Math.max(this.state.last_clock, Date.now()); await this.save(); }
+-        return { data: { ...data, version: '5.3.0', replica: { linked: true }, platform: { gym_id: this.session.gym_id, gym_name: data.settings!.name, support: false, superadmin: false, read_only: !maintain } } };
++        return { data: { ...data, version: '5.5.1', replica: { linked: true }, platform: { gym_id: this.session.gym_id, gym_name: data.settings!.name, support: false, superadmin: false, read_only: !maintain } } };
+       }
+       if (first === 'members' && method === 'GET') return { data: await s.all('SELECT user_id id,email,name,role,active FROM members') };
+       if (first === 'branding' && !id && method === 'GET') return { data: await s.one('SELECT name,brand_color,logo_path FROM settings WHERE id=1') };
+@@ -454,6 +468,13 @@
+     try {
+       for (;;) {
+         const patch = await this.exclusive(async () => {
++          const now = Date.now();
++          if (this.state.daily_closing_policy === 1 && !this.state.revoked && !this.state.conflict &&
++              this.state.base.expires_at >= now && now >= this.state.last_clock - 300000) {
++            const system = new Service(nativeDatabase(this.db), { id: 'system', email: 'system', name: 'Sistema', role: 'admin' }, this.codec);
++            const result = await system.closeStaleSessions(new Date(now));
++            if (result.closed) { this.state.last_clock = Math.max(this.state.last_clock, now); await this.save(); }
++          }
+           if (!this.state.pending) {
+             const tables = await this.tables(),
+               changes = syncChanges(this.state.base, tables);
+--- a/mobile/tests/offline.test.ts
++++ b/mobile/tests/offline.test.ts
+@@ -140,6 +140,9 @@
+       './credential-codec': credentialCodec,
+       './http': { request: network, ApiError },
+     };
++    let timerNow: number | null = null;
++    const automatic: (() => void)[] = [];
++    class PhoneDate extends Date { static now() { return timerNow ?? Date.now(); } }
+     const exports: any = {};
+     const code = ts.transpileModule(readFileSync(new URL('../src/offline.ts', import.meta.url), 'utf8'), {
+       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+@@ -152,10 +155,10 @@
+       },
+       crypto: webcrypto,
+       URL,
+-      Date,
++      Date: PhoneDate,
+       setTimeout,
+       clearTimeout,
+-      setInterval,
++      setInterval: (callback: () => void, ms: number) => { automatic.push(callback); return setInterval(callback, ms); },
+       clearInterval,
+       console,
+     });
+@@ -275,6 +278,27 @@
+     await restarted.synchronize();
+     await settled(restarted);
+     await assert.rejects(scan(restarted, seed.paid.code), (error: any) => error.status === 403);
++    // A different authorized phone must close the gym from its timer, without scans or Internet.
++    await app.tenants.withTenant(gym, async ctx => {
++      await new serviceModule.Service(ctx.db, { ...admin, role: 'admin' }, ctx.codec).updateSettings({ closing_time: '23:59' });
++    });
++    const adminLogin = await app.store.mobileLogin({ email: admin.email, password: '123456', gymId: gym.id });
++    const timerPhone = await exports.MobileReplica.open({ ...adminLogin, server: session.server });
++    phones.push(timerPhone); await settled(timerPhone);
++    connected = false;
++    const raw = opened.at(-1)!;
++    const entry = raw.prepare("SELECT occurred_at FROM events WHERE person_id=? AND direction='entry' ORDER BY occurred_at DESC LIMIT 1").get(seed.person.id)!;
++    const localDay = new Date(Number(entry.occurred_at) - 4 * 3600000).toISOString().slice(0, 10);
++    const closes = Date.parse(localDay + 'T23:59:00-04:00');
++    timerNow = closes - 1; automatic.at(-1)!(); await settled(timerPhone);
++    assert.equal(raw.prepare("SELECT COUNT(*) n FROM events WHERE person_id=? AND reason='AUTO_CLOSE'").get(seed.person.id)!.n, 0);
++    timerNow = closes; automatic.at(-1)!(); await settled(timerPhone);
++    assert.equal(raw.prepare("SELECT occurred_at FROM events WHERE person_id=? AND reason='AUTO_CLOSE'").get(seed.person.id)!.occurred_at, closes);
++    assert.equal(raw.prepare('SELECT sessions_remaining FROM pos_memberships WHERE person_id=?').get(seed.person.id)!.sessions_remaining, 1);
++    automatic.at(-1)!(); await settled(timerPhone);
++    assert.equal(raw.prepare("SELECT COUNT(*) n FROM events WHERE person_id=? AND reason='AUTO_CLOSE'").get(seed.person.id)!.n, 1);
++    assert.ok(timerPhone.state.pending, 'la salida queda guardada para enviar cuando vuelva Internet');
++
+   } finally {
+     for (const phone of phones) await phone.stop();
+     for (const raw of opened) raw.close();
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "gympass-control-acceso",
+-  "version": "5.5.0",
++  "version": "5.5.1",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "gympass-control-acceso",
+-      "version": "5.5.0",
++      "version": "5.5.1",
+       "dependencies": {
+         "lucide-react": "1.57.0",
+         "qrcode-generator": "2.0.4",
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "gympass-control-acceso",
+-  "version": "5.5.0",
++  "version": "5.5.1",
+   "private": true,
+   "engines": {
+     "node": ">=24.0.0"
+--- /dev/null
++++ b/server/migrations/028_default_daily_closing.sql
+@@ -0,0 +1,7 @@
++-- Activar el cierre diario en instalaciones existentes y en las altas futuras.
++-- Las visitas se cierran mediante el mantenimiento habitual con eventos AUTO_CLOSE.
++UPDATE settings SET closing_time='23:59' WHERE id=1;
++CREATE TRIGGER settings_default_daily_closing AFTER INSERT ON settings
++WHEN NEW.closing_time IS NULL BEGIN
++ UPDATE settings SET closing_time='23:59' WHERE id=NEW.id;
++END;
+--- a/src/AppDownloads.tsx
++++ b/src/AppDownloads.tsx
+@@ -1,8 +1,8 @@
+ ﻿import { Download, Monitor, Smartphone } from 'lucide-react';
+ import './styles/app-downloads.css';
+ 
+-const release = 'https://github.com/DiegoVargasZ/gympass/releases/download/v5.5.0/';
+-const androidApk = release + 'GymPASS-Android-5.5.0.apk';
++const release = 'https://github.com/DiegoVargasZ/gympass/releases/download/v5.5.1/';
++const androidApk = release + 'GymPASS-Android-5.5.1.apk';
+ 
+ export default function AppDownloads() {
+   if (
+@@ -22,20 +22,20 @@
+           <Smartphone size={24} aria-hidden="true" />
+           <span>
+             <strong>Móvil Android</strong>
+-            <small>Descargar APK · v5.5.0</small>
++            <small>Descargar APK · v5.5.1</small>
+           </span>
+           <Download size={16} aria-hidden="true" />
+         </a>
+         <a
+           className="app-download"
+-          href={release + 'GymPASS-Setup-5.5.0.exe'}
++          href={release + 'GymPASS-Setup-5.5.1.exe'}
+           target="_blank"
+           rel="noopener noreferrer"
+         >
+           <Monitor size={24} aria-hidden="true" />
+           <span>
+             <strong>Escritorio Windows</strong>
+-            <small>Descargar instalador · v5.5.0</small>
++            <small>Descargar instalador · v5.5.1</small>
+           </span>
+           <Download size={16} aria-hidden="true" />
+         </a>
+--- a/src/AppShell.tsx
++++ b/src/AppShell.tsx
+@@ -20,6 +20,7 @@
+ import { sectionOf, sectionsFor, type Page, type SectionId } from './navigation';
+ import MobileNavigation from './MobileNavigation';
+ import Alerts from './Alerts';
++import Support from './Support';
+ import BrandLogo from './BrandLogo';
+ import ConnectionStatus from './ConnectionStatus';
+ import ThemeToggle from './ThemeToggle';
+@@ -237,6 +238,7 @@
+           <div className="topbar-right">
+             <ConnectionStatus platform={!!data.platform} replica={!!data.replica?.linked} />
+             <Alerts timezone={data.settings.timezone} />
++            <Support version={data.version} />
+             <ThemeToggle />
+             <button
+               className="icon-btn"
+--- a/src/Settings.tsx
++++ b/src/Settings.tsx
+@@ -284,7 +284,7 @@
+                             type="time"
+                             step={60}
+                             required
+-                            defaultValue={data.settings.closing_time || ''}
++                            defaultValue={data.settings.closing_time || '23:59'}
+                           />
+                         </Field>
+                       )}
+--- /dev/null
++++ b/src/Support.tsx
+@@ -0,0 +1,44 @@
++import { useState } from 'react';
++import { createPortal } from 'react-dom';
++import { ExternalLink } from 'lucide-react';
++import { Modal } from './ui';
++import './styles/support.css';
++
++export const supportContacts = [
++  { name: 'Diego Vargas', phone: '59162629717', display: '+591 62629717' },
++  { name: 'Mateo Bazoberry', phone: '59176738942', display: '+591 76738942' },
++] as const;
++
++export function supportWhatsappUrl(phone: string, version = '') {
++  const text = `Hola, necesito ayuda con GymPASS${version ? ` ${version}` : ''}. Tengo un problema con la aplicación.`;
++  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
++}
++
++function WhatsAppIcon() {
++  return <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
++    <path d="M20.5 11.7a8.5 8.5 0 0 1-12.6 7.5L3 20.5l1.3-4.8a8.5 8.5 0 1 1 16.2-4Z" />
++    <path d="m8.2 7.5 1.5 2.3-.9 1.1a10.1 10.1 0 0 0 4.3 4.3l1.1-.9 2.3 1.5c-.4 1.4-1.5 1.7-2.6 1.3a12 12 0 0 1-7-7c-.4-1.1-.1-2.2 1.3-2.6Z" />
++  </svg>;
++}
++
++export default function Support({ version = '' }: { version?: string }) {
++  const [open, setOpen] = useState(false);
++  return <>
++    <button type="button" className="icon-btn support-trigger" aria-label="Soporte por WhatsApp" title="Soporte por WhatsApp"
++      aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
++      <WhatsAppIcon /><span>WhatsApp</span>
++    </button>
++    {open && createPortal(<Modal title="Soporte por WhatsApp" className="support-dialog" onClose={() => setOpen(false)}>
++      <p>¿Encontraste un error o necesitas ayuda? Elige un contacto para abrir su chat.</p>
++      <div className="support-contacts">
++        {supportContacts.map(contact => <a key={contact.phone} className="support-contact"
++          href={supportWhatsappUrl(contact.phone, version)} target="_blank" rel="noopener noreferrer"
++          aria-label={`Escribir a ${contact.name} por WhatsApp`}>
++          <WhatsAppIcon />
++          <span><strong>{contact.name}</strong><small>{contact.display}</small></span>
++          <ExternalLink size={17} aria-hidden="true" />
++        </a>)}
++      </div>
++    </Modal>, document.body)}
++  </>;
++}
+--- /dev/null
++++ b/src/styles/support.css
+@@ -0,0 +1,40 @@
++.app-shell .support-trigger {
++  color: #147a3d;
++  background: #e9f8ef;
++  border: 1px solid #98c9aa;
++  width: auto;
++  min-width: 40px;
++  flex-shrink: 0;
++  gap: 6px;
++  padding-inline: 9px;
++}
++.support-trigger span { font-size: 12px; font-weight: 650; }
++.support-trigger svg { flex-shrink: 0; }
++.support-dialog > p { color: var(--muted); line-height: 1.6; }
++.support-contacts { display: grid; gap: 12px; margin-top: 20px; }
++.support-contact {
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  padding: 16px;
++  border: 1px solid var(--border-strong);
++  border-radius: var(--r-md);
++  color: var(--ink);
++  background: var(--surface);
++  text-decoration: none;
++}
++.support-contact:hover { border-color: #147a3d; background: var(--surface-2); }
++.support-contact > svg:first-child { color: #147a3d; flex-shrink: 0; }
++.support-contact > svg:last-child { margin-left: auto; flex-shrink: 0; color: var(--muted); }
++.support-contact strong, .support-contact small { display: block; }
++.support-contact small { margin-top: 4px; color: var(--muted); }
++.support-contact:focus-visible, .support-trigger:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
++[data-theme='dark'] .app-shell .support-trigger { color: #70e79c; background: #183426; border-color: #3b7551; }
++[data-theme='dark'] .support-contact > svg:first-child { color: #70e79c; }
++@media (max-width: 850px) {
++  .support-trigger span { display: none; }
++  .app-shell .support-trigger { padding-inline: 0; width: 44px; }
++}
++@media (max-width: 360px) {
++  .app-shell .topbar-right { gap: 0; flex-wrap: wrap; max-width: 100%; }
++}
+--- a/tests/attendance.test.ts
++++ b/tests/attendance.test.ts
+@@ -10,6 +10,7 @@
+     "INSERT INTO settings(id,owner,name,timezone) VALUES(1,'owner','Pruebas','America/La_Paz');" +
+       "INSERT INTO zones(id,name) VALUES('principal','Principal');",
+   );
++  db.raw.exec('UPDATE settings SET closing_time=NULL'); // This fixture exercises the legacy hours policy.
+   const service = new Service(db, { id: 'owner', email: 'owner@example.test', name: 'Admin', role: 'admin' });
+   const create = (name: string, extra: Record<string, unknown> = {}) =>
+     service.savePerson({ name, document: name, kind: 'employee', status: 'active', zone_ids: ['principal'], ...extra });
+--- a/tests/closing-settings-ui.test.ts
++++ b/tests/closing-settings-ui.test.ts
+@@ -84,7 +84,7 @@
+   };
+ }
+ 
+-test('legacy hours remain selected and daily closing is opt-in with a required local time', async (t) => {
++test('legacy hours remain selected and switching to daily closing proposes 23:59', async (t) => {
+   const view = await fixture(t);
+   assert.equal(view.field('closing_mode').props.value, 'hours');
+   assert.equal(view.field('auto_close_hours').props.defaultValue, 24);
+@@ -93,7 +93,7 @@
+   const time = view.field('closing_time');
+   assert.equal(time.props.type, 'time');
+   assert.equal(time.props.required, true);
+-  assert.equal(time.props.defaultValue, '');
++  assert.equal(time.props.defaultValue, '23:59');
+   assert.throws(() => view.field('auto_close_hours'));
+   assert.match(elementText(view.tree), /Cierre automático/);
+   const closingField = findElement(
+--- a/tests/gym.test.ts
++++ b/tests/gym.test.ts
+@@ -9,7 +9,7 @@
+   t.after(() => db.close());
+   db.raw.exec("INSERT INTO settings(id,owner,name,timezone) VALUES(1,'owner','Gimnasio','America/La_Paz');");
+   const service = new Service(db, { id: 'owner', email: 'owner@example.test', name: 'Admin', role: 'admin' });
+-  await service.updateSettings({ auto_close_hours: 0 });
++  await service.updateSettings({ auto_close_hours: 0, closing_time: null });
+   const person = await service.savePerson({
+     phone: '59171234567',
+     zone_ids: ['general'],
+--- a/tests/http.test.ts
++++ b/tests/http.test.ts
+@@ -479,6 +479,7 @@
+   await request('auth/logout', 'POST', {});
+   await request('auth/login', 'POST', { email: 'admin@example.test', password: 'PruebaSegura123' });
+   const seed = new SqliteDatabase(resolve(dir, 'gympass.sqlite'));
++  seed.raw.exec('UPDATE settings SET closing_time=NULL'); // This restart checks the legacy 24-hour policy.
+   const oldEntryTime = new Date(Date.now() - 48 * 3600000);
+   try {
+     const seedService = new Service(seed, {
+--- a/tests/pos-access.test.ts
++++ b/tests/pos-access.test.ts
+@@ -8,6 +8,7 @@
+   const db = new SqliteDatabase(':memory:');
+   t.after(() => db.close());
+   db.raw.exec("INSERT INTO settings(id,owner,name,timezone) VALUES(1,'owner','Gym','America/La_Paz')");
++  db.raw.exec('UPDATE settings SET closing_time=NULL'); // This fixture exercises the legacy hours policy.
+   const service = new Service(db, { id: 'owner', email: 'a@test.test', name: 'Admin', role: 'admin' });
+   const pos = new PosService(service);
+   const person = await service.savePerson({
+--- a/tests/regression-backend.test.ts
++++ b/tests/regression-backend.test.ts
+@@ -82,7 +82,7 @@
+           name: 'Admin',
+           role: 'admin',
+         });
+-        await restoredService.updateSettings({ auto_close_hours: 0 });
++        await restoredService.updateSettings({ auto_close_hours: 0, closing_time: null });
+         assert.equal(
+           (await restoredService.access({ code: 'UMB_qr-antiguo', direction: 'exit', request_id: crypto.randomUUID() }))
+             .reason,
+@@ -101,6 +101,7 @@
+   const db = new SqliteDatabase(':memory:');
+   t.after(() => db.close());
+   db.raw.exec("INSERT INTO settings(id,owner,name,timezone) VALUES(1,'owner','Pruebas','America/La_Paz')");
++  db.raw.exec('UPDATE settings SET closing_time=NULL'); // Explicitly exercise visits without daily closing.
+   const service = new Service(db, { id: 'owner', email: 'owner@example.test', name: 'Admin', role: 'admin' });
+   const visit = await service.saveVisit({
+     name: 'Visita nocturna',
+--- a/tests/release-version.test.ts
++++ b/tests/release-version.test.ts
+@@ -2,14 +2,15 @@
+ import { test } from 'node:test';
+ import { readFile } from 'node:fs/promises';
+ 
+-test('web, Android y Windows usan 5.5.0', async () => {
++test('web, Android y Windows usan 5.5.1', async () => {
+   for (const path of ['package.json', 'desktop/package.json', 'desktop-runtime/package.json']) {
+     const manifest = JSON.parse(await readFile(new URL('../' + path, import.meta.url), 'utf8'));
+-    assert.equal(manifest.version, '5.5.0', path);
++    assert.equal(manifest.version, '5.5.1', path);
+   }
+   const app = JSON.parse(await readFile(new URL('../mobile/app.json', import.meta.url), 'utf8'));
+-  assert.equal(JSON.parse(await readFile(new URL('../mobile/package.json', import.meta.url), 'utf8')).version, '5.5.0');
+-  assert.equal(app.expo.version, '5.5.0');
+-  assert.equal(app.expo.android.versionCode, 5500);
+-  assert.equal(app.expo.ios.buildNumber, '5500');
++  assert.equal(JSON.parse(await readFile(new URL('../mobile/package.json', import.meta.url), 'utf8')).version, '5.5.1');
++  assert.equal(app.expo.version, '5.5.1');
++  assert.equal(app.expo.android.versionCode, 5510);
++  assert.equal(app.expo.ios.buildNumber, '5510');
+ });
++
+--- a/tests/scale.test.ts
++++ b/tests/scale.test.ts
+@@ -11,6 +11,7 @@
+   db.raw.exec(
+     "INSERT INTO settings(id,owner,name,timezone) VALUES(1,'owner','Escala','UTC'); INSERT INTO zones(id,name) VALUES('main','Principal'),('office','Oficina');",
+   );
++  db.raw.exec('UPDATE settings SET closing_time=NULL'); // This fixture exercises the legacy hours policy.
+   const service = new Service(db, { id: 'owner', email: 'admin@example.test', name: 'Admin', role: 'admin' });
+   const create = (name: string, extra: Record<string, unknown> = {}) =>
+     service.savePerson({
+--- /dev/null
++++ b/tests/support.test.ts
+@@ -0,0 +1,39 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { componentHarness, componentStubs, elementText, findElement } from './component-harness.ts';
++
++test('soporte abre ambos chats con los números correctos y la versión, y permite cerrar el diálogo', async t => {
++  const h = componentHarness(); t.after(() => h.cleanup());
++  const { default: Support } = h.load('../src/Support.tsx', {
++    'react-dom': { createPortal: (tree: unknown) => tree }, 'lucide-react': componentStubs,
++    './ui': { Modal: 'Modal' }, './styles/support.css': {},
++  });
++  let tree = h.render(() => Support({ version: '5.5.1' }));
++  const button = () => findElement(tree, e => e.type === 'button' && e.props['aria-label'] === 'Soporte por WhatsApp');
++  assert.equal(button().props['aria-expanded'], false);
++  assert.throws(() => findElement(tree, e => e.type === 'Modal'));
++  button().props.onClick(); tree = await h.settle();
++  assert.equal(button().props['aria-expanded'], true);
++  for (const [name, phone] of [['Diego Vargas', '59162629717'], ['Mateo Bazoberry', '59176738942']]) {
++    const contact = findElement(tree, e => e.type === 'a' && e.props['aria-label'] === `Escribir a ${name} por WhatsApp`);
++    const url = new URL(contact.props.href);
++    assert.equal(url.origin, 'https://wa.me'); assert.equal(url.pathname, '/' + phone);
++    assert.match(url.searchParams.get('text')!, /GymPASS 5\.5\.1/);
++    assert.match(url.searchParams.get('text')!, /problema con la aplicación/);
++    assert.equal(contact.props.target, '_blank'); assert.match(contact.props.rel, /noopener/);
++    assert.ok(elementText(contact).includes(name));
++  }
++  findElement(tree, e => e.type === 'Modal').props.onClose(); tree = await h.settle();
++  assert.equal(button().props['aria-expanded'], false);
++  assert.throws(() => findElement(tree, e => e.type === 'Modal'));
++});
++
++test('el enlace de soporte también funciona sin una versión disponible', () => {
++  const h = componentHarness();
++  const { supportWhatsappUrl } = h.load('../src/Support.tsx', {
++    'react-dom': {}, 'lucide-react': componentStubs, './ui': {}, './styles/support.css': {},
++  });
++  const url = new URL(supportWhatsappUrl('59176738942'));
++  assert.equal(url.pathname, '/59176738942');
++  assert.equal(url.searchParams.get('text'), 'Hola, necesito ayuda con GymPASS. Tengo un problema con la aplicación.');
++});

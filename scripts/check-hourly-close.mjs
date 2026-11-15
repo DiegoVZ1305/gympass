@@ -7,8 +7,60 @@ import { startPlatform } from '../server/platform.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PosService } from '../lib/pos.ts';
 
 const hour = 3600000;
+
+test('los gimnasios nuevos y existentes activan el cierre diario a las 23:59 sin perder datos', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'gympass-daily-migration-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const file = join(directory, 'gym.sqlite');
+  let db = new SqliteDatabase(file);
+  db.raw.exec("INSERT INTO settings(id,owner,name,timezone) VALUES(1,'owner','Conservado','America/La_Paz')");
+  assert.equal(db.raw.prepare('SELECT closing_time FROM settings').get().closing_time, '23:59');
+  db.raw.exec("UPDATE settings SET closing_time=NULL; DROP TRIGGER settings_default_daily_closing; DELETE FROM schema_version WHERE version=28");
+  db.close();
+  db = new SqliteDatabase(file);
+  try {
+    assert.deepEqual({ ...db.raw.prepare('SELECT name,closing_time FROM settings').get() }, { name: 'Conservado', closing_time: '23:59' });
+  } finally { db.close(); }
+});
+
+test('a las 23:59 salen todos los presentes, conserva salidas reales y no consume sesiones', async t => {
+  const { db, service } = await fixture(t);
+  await service.updateSettings({ closing_time: '23:59' });
+  const pos = new PosService(service);
+  const person = await service.savePerson({ name: 'Sesiones al cierre', document: 'DAILY', kind: 'member', status: 'active', phone: '59171234567' });
+  const plan = await pos.savePlan({ name: 'Quince sesiones', unit: 'sessions', duration: 15, price_cents: 10000 });
+  const sale = await pos.checkout({ person_id: person.id, start_date: '2020-01-01', sessions_until: '2099-12-31', request_id: crypto.randomUUID(), payment_method: 'cash', lines: [{ kind: 'plan', id: plan.id, quantity: 1 }] });
+  const employee = await service.savePerson({ name: 'Empleado al cierre', document: 'DAILY-E', kind: 'employee', status: 'active' });
+  const gone = await service.savePerson({ name: 'Ya salió', document: 'DAILY-G', kind: 'employee', status: 'active' });
+  const entry = Date.parse('2026-11-15T22:00:00-04:00');
+  for (const id of [person.id, employee.id, gone.id])
+    await service.access({ person_id: id, zone_id: 'general', direction: 'entry', reason: 'Prueba diaria', request_id: crypto.randomUUID() }, undefined, new Date(entry));
+  await service.access({ person_id: gone.id, zone_id: 'general', direction: 'exit', reason: 'Salida real', request_id: crypto.randomUUID() }, undefined, new Date(entry + 60000));
+  const closing = Date.parse('2026-11-15T23:59:00-04:00');
+  assert.equal((await service.closeStaleSessions(new Date(closing - 1))).closed, 0);
+  assert.equal((await service.closeStaleSessions(new Date(closing))).closed, 2);
+  assert.equal((await service.all(presenceSql)).length, 0);
+  const exits = await service.all("SELECT * FROM events WHERE reason='AUTO_CLOSE'");
+  assert.equal(exits.length, 2);
+  assert.ok(exits.every(row => row.occurred_at === closing && row.direction === 'exit' && row.method === 'system'));
+  assert.equal(db.raw.prepare('SELECT sessions_remaining FROM pos_memberships WHERE id=?').get(sale.memberships[0].id).sessions_remaining, 14);
+  assert.equal((await service.closeStaleSessions(new Date(closing + 60000))).closed, 0);
+  const next = await service.access({ person_id: person.id, direction: 'auto', reason: 'Siguiente día', request_id: crypto.randomUUID() }, undefined, new Date('2026-11-16T08:00:00-04:00'));
+  assert.equal(next.direction, 'entry');
+  assert.equal(next.allowed, 1);
+});
+
+test('el cierre recuperado registra las 23:59 del día de entrada aunque el equipo vuelva días después', async t => {
+  const { service, scan, exits } = await fixture(t);
+  await service.updateSettings({ closing_time: '23:59' });
+  await scan('2026-11-12T18:00:00-04:00');
+  assert.equal((await service.closeStaleSessions(new Date('2026-11-15T10:00:00-04:00'))).closed, 1);
+  assert.equal((await exits())[0].occurred_at, Date.parse('2026-11-12T23:59:00-04:00'));
+  assert.equal((await service.closeStaleSessions(new Date('2026-11-15T11:00:00-04:00'))).closed, 0);
+});
 
 test('el panel ya en la cola puede comprobar cierres aunque el temporizador esté esperando detrás', async () => {
   const db = new SqliteDatabase(':memory:');

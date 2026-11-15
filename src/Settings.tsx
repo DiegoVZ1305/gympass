@@ -284,7 +284,7 @@ export default function Settings({ data, admin, saved, notify, members, devices,
                             type="time"
                             step={60}
                             required
-                            defaultValue={data.settings.closing_time || ''}
+                            defaultValue={data.settings.closing_time || '23:59'}
                           />
                         </Field>
                       )}
