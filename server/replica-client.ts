@@ -180,6 +180,7 @@ export class ReplicaClient {
           "Content-Type": "application/json",
           "X-Requested-With": "GymPASS",
           "X-GymPASS-Product-Costs": "1",
+          'X-GymPASS-Session-Plans': '1',
           ...headers,
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),

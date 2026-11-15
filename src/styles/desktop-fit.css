@@ -58,6 +58,36 @@
     height: auto;
   }
 
+  .app-shell .pos-page-flow .pos-checkout {
+    height: auto;
+    align-items: start;
+    grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
+  }
+
+  .app-shell .pos-page-flow .pos-checkout-tab,
+  .app-shell .pos-page-flow .pos-catalog-items,
+  .app-shell .pos-page-flow .pos-catalog-group {
+    flex: none;
+    min-height: auto;
+  }
+
+  .app-shell .pos-page-flow .pos-items {
+    overflow: visible;
+    min-height: auto;
+  }
+
+  .app-shell .pos-page-flow .pos-cart {
+    position: sticky;
+    top: 20px;
+    max-height: calc(100dvh - var(--platform-bar-height, 0px) - 40px);
+    overflow-y: auto;
+  }
+
+  .app-shell .pos-page-flow .pos-cart > .form > fieldset {
+    flex: none;
+    overflow: visible;
+  }
+
   .app-shell .pos-tabs {
     flex-shrink: 0;
     margin-bottom: 16px;

@@ -1,5 +1,13 @@
 # Cambios
 
+## 5.5.0
+
+- Los planes por sesiones incluyen cantidad de sesiones y plazo para completarlas, en meses o días. El catálogo y los selectores muestran ambos datos; al vender se propone automáticamente la fecha límite según el inicio y el plazo del plan.
+- La migración 027 asigna un mes como plazo inicial a los planes existentes. Las membresías ya cobradas conservan su fecha. Las ediciones de clientes anteriores no borran el plazo de la nube; Android y Windows actualizados lo conservan y calculan sin conexión.
+- Avisos reducidos a tres opciones: una voz con nombre, las grabaciones «Acceso permitido / Acceso denegado» y dos beeps distintos para resultado correcto o rechazado. Las preferencias de voces anteriores pasan a la única voz del dispositivo. Se elimina la descarga y generación de modelos en los avisos.
+- Caja deja de repartir productos y planes dentro de una altura fija: el catálogo crece con sus tarjetas y se recorre con la página. En escritorio se amplía el catálogo y el cobro permanece a la vista mientras se desplaza.
+- Web, instalador y portable Windows y APK Android en 5.5.0. Android conserva paquete y firma y usa el código 5500.
+
 ## 5.4.0
 
 - Registro y edición de socios sin foto. Las listas y resultados de acceso usan iniciales; las fotos anteriores se conservan en los datos sin mostrarlas.

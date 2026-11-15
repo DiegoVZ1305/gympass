@@ -1,6 +1,6 @@
 import type { ProductMargin } from './product-costs.ts';
-export function defaultSessionUntil(start: string) {
-  const end = new Date(planEndDate(start, 'months', 1)! + 'T12:00:00Z');
+export function defaultSessionUntil(start: string, plan?: { session_period_unit?: 'days' | 'months'; session_period?: number }) {
+  const end = new Date(planEndDate(start, plan?.session_period_unit || 'months', plan?.session_period || 1)! + 'T12:00:00Z');
   end.setUTCDate(end.getUTCDate() - 1);
   return end.toISOString().slice(0, 10);
 }
@@ -37,12 +37,20 @@ export type PosPlan = {
   duration: number;
   price_cents: number;
   active: number;
+  session_period_unit?: 'days' | 'months';
+  session_period?: number;
 };
+export function planDurationLabel(plan: Pick<PosPlan, 'unit' | 'duration' | 'session_period_unit' | 'session_period'>) {
+  if (plan.unit !== 'sessions') return `${plan.duration} ${plan.unit === 'days' ? 'día(s)' : 'mes(es)'}`;
+  const count = plan.session_period || 1;
+  const period = plan.session_period_unit === 'days' ? (count === 1 ? 'día' : 'días') : (count === 1 ? 'mes' : 'meses');
+  return `${plan.duration} sesiones · completar en ${count} ${period}`;
+}
 export type PosLineInput = {
   kind: 'product' | 'plan';
   id: string;
   quantity: number;
-  expected_plan?: { unit: PlanUnit; duration: number };
+  expected_plan?: { unit: PlanUnit; duration: number; session_period_unit?: 'days' | 'months'; session_period?: number };
 };
 export type PosCheckout = {
   expected_total_cents?: number;

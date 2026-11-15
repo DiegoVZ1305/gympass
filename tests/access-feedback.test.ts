@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { componentHarness } from './component-harness.ts';
-import { defaultVoiceSettings, recordedAccessVoice } from '../lib/access-feedback.ts';
+import { beepAccessVoice, defaultVoiceSettings, recordedAccessVoice } from '../lib/access-feedback.ts';
 
 function fixture(t: test.TestContext, options: { speech?: boolean; audio?: boolean; delayedVoices?: boolean; silent?: boolean; recordingDelay?: Promise<void>; recordingsFail?: boolean } = {}) {
   const spoken: any[] = [];
@@ -60,6 +60,15 @@ function fixture(t: test.TestContext, options: { speech?: boolean; audio?: boole
     },
   };
 }
+
+test('beeps: entradas y salidas correctas usan un beep y el rechazo otro, sin voz', async t => {
+  const f = fixture(t);
+  const options = { ...defaultVoiceSettings, voiceURI: beepAccessVoice };
+  for (const [allowed, direction] of [[true, 'entry'], [true, 'exit'], [false, 'entry']] as const)
+    assert.equal(await f.api.accessFeedback(allowed, true, false, direction, 'Ana', options), 'tone');
+  assert.deepEqual(f.tones, ['/sounds/entry.wav', '/sounds/entry.wav', '/sounds/denied.wav']);
+  assert.deepEqual(f.spoken, []);
+});
 
 test('entrada y salida pronuncian el nombre con voz española y conservan la vibración', async (t) => {
   const f = fixture(t);
@@ -121,7 +130,7 @@ test('el aviso usa la voz exacta y la velocidad seleccionadas', async (t) => {
   assert.equal(f.spoken[1].voice, raul);
 });
 
-test('si falla la voz en línea, intenta una voz local del mismo tipo antes de usar el tono', async (t) => {
+test('elige una sola voz local y conserva el beep si no puede hablar', async (t) => {
   const f = fixture(t);
   const jorge = { ...f.voice, name: 'Microsoft Jorge Online (Natural)', voiceURI: 'jorge' };
   const raul = { ...f.voice, name: 'Raúl', voiceURI: 'raul', localService: true };
@@ -129,13 +138,10 @@ test('si falla la voz en línea, intenta una voz local del mismo tipo antes de u
   f.loadVoices([f.voice, jorge, helena, raul]);
   f.api.accessFeedback(true, true, false, 'entry', 'José', { voiceURI: 'jorge', voiceGender: 'auto', voiceRate: 1 });
   await f.settle();
-  assert.equal(f.spoken[0].voice, jorge);
+  assert.equal(f.spoken[0].voice, helena);
   f.spoken[0].onerror();
   await f.settle();
-  assert.equal(f.spoken[1].voice, raul);
-  assert.deepEqual(f.tones, []);
-  f.spoken[1].onerror();
-  await f.settle();
+  assert.equal(f.spoken.length, 1);
   assert.deepEqual(f.tones, ['/sounds/entry.wav']);
 });
 

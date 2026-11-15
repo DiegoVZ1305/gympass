@@ -1,0 +1,1618 @@
+--- a/desktop/package.json
++++ b/desktop/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "gympass-desktop",
+   "productName": "GymPASS",
+-  "version": "5.4.0",
++  "version": "5.5.0",
+   "description": "Entradas, salidas y tiempos de permanencia para gimnasios",
+   "author": "GymPASS",
+   "license": "UNLICENSED",
+--- a/lib/access-feedback.ts
++++ b/lib/access-feedback.ts
+@@ -16,6 +16,10 @@
+ export const voiceRateLimits = { min: 0.5, max: 3, step: 0.01 } as const;
+ export const defaultVoiceSettings: VoiceSettings = { voiceURI: '', voiceGender: 'auto', voiceRate: 0.98 };
+ export const recordedAccessVoice = 'recorded:access';
++export const beepAccessVoice = 'tone:beep';
++export function accessVoiceMode(value: unknown) {
++  return value === recordedAccessVoice ? recordedAccessVoice : value === beepAccessVoice ? beepAccessVoice : '';
++}
+ export function recordedAccessSound(allowed: boolean) {
+   return allowed ? 'allowed-recorded' : 'denied-recorded';
+ }
+--- a/lib/pos-types.ts
++++ b/lib/pos-types.ts
+@@ -1,6 +1,6 @@
+ import type { ProductMargin } from './product-costs.ts';
+-export function defaultSessionUntil(start: string) {
+-  const end = new Date(planEndDate(start, 'months', 1)! + 'T12:00:00Z');
++export function defaultSessionUntil(start: string, plan?: { session_period_unit?: 'days' | 'months'; session_period?: number }) {
++  const end = new Date(planEndDate(start, plan?.session_period_unit || 'months', plan?.session_period || 1)! + 'T12:00:00Z');
+   end.setUTCDate(end.getUTCDate() - 1);
+   return end.toISOString().slice(0, 10);
+ }
+@@ -37,12 +37,20 @@
+   duration: number;
+   price_cents: number;
+   active: number;
++  session_period_unit?: 'days' | 'months';
++  session_period?: number;
+ };
++export function planDurationLabel(plan: Pick<PosPlan, 'unit' | 'duration' | 'session_period_unit' | 'session_period'>) {
++  if (plan.unit !== 'sessions') return `${plan.duration} ${plan.unit === 'days' ? 'día(s)' : 'mes(es)'}`;
++  const count = plan.session_period || 1;
++  const period = plan.session_period_unit === 'days' ? (count === 1 ? 'día' : 'días') : (count === 1 ? 'mes' : 'meses');
++  return `${plan.duration} sesiones · completar en ${count} ${period}`;
++}
+ export type PosLineInput = {
+   kind: 'product' | 'plan';
+   id: string;
+   quantity: number;
+-  expected_plan?: { unit: PlanUnit; duration: number };
++  expected_plan?: { unit: PlanUnit; duration: number; session_period_unit?: 'days' | 'months'; session_period?: number };
+ };
+ export type PosCheckout = {
+   expected_total_cents?: number;
+--- a/lib/pos.ts
++++ b/lib/pos.ts
+@@ -3,6 +3,7 @@
+ import { localParts, nextDate } from './domain.ts';
+ import {
+   planEndDate,
++  defaultSessionUntil,
+   type PosCatalog,
+   type PosProduct,
+   type PosPlan,
+@@ -63,6 +64,8 @@
+   price_cents: cents,
+   unit: z.enum(['days', 'months', 'sessions']),
+   duration: z.number().int().positive().max(3660),
++  session_period_unit: z.enum(['days', 'months']).optional(),
++  session_period: z.number().int().positive().max(3660).optional(),
+   active: flag.default(1),
+ });
+ const checkoutSchema = z.object({
+@@ -85,7 +88,8 @@
+         id: text,
+         quantity: z.number().int().positive().max(1000),
+         expected_plan: z
+-          .object({ unit: z.enum(['days', 'months', 'sessions']), duration: z.number().int().positive().max(3660) })
++          .object({ unit: z.enum(['days', 'months', 'sessions']), duration: z.number().int().positive().max(3660),
++            session_period_unit: z.enum(['days', 'months']).optional(), session_period: z.number().int().positive().max(3660).optional() })
+           .optional(),
+       }),
+     )
+@@ -218,25 +222,33 @@
+       key = id || crypto.randomUUID();
+     if (p.unit === 'months' && p.duration > 120) throw new ApiError(400, 'La duración máxima es de 120 meses.');
+     if (id) await this.service.exists('pos_plans', id);
++    const previous = id ? await this.service.one('SELECT session_period_unit,session_period FROM pos_plans WHERE id=?', id) : null;
++    const periodUnit = p.session_period_unit ?? previous?.session_period_unit ?? 'months';
++    const period = p.session_period ?? previous?.session_period ?? 1;
++    if (periodUnit === 'months' && period > 120) throw new ApiError(400, 'El plazo máximo es de 120 meses.');
+     await this.atomic([
+       id
+         ? this.service.stmt(
+-            'UPDATE pos_plans SET name=?,unit=?,duration=?,price_cents=?,active=? WHERE id=?',
++            'UPDATE pos_plans SET name=?,unit=?,duration=?,price_cents=?,active=?,session_period_unit=?,session_period=? WHERE id=?',
+             p.name,
+             p.unit,
+             p.duration,
+             p.price_cents,
+             p.active,
++            periodUnit,
++            period,
+             key,
+           )
+         : this.service.stmt(
+-            'INSERT INTO pos_plans(id,name,unit,duration,price_cents,active) VALUES(?,?,?,?,?,?)',
++            'INSERT INTO pos_plans(id,name,unit,duration,price_cents,active,session_period_unit,session_period) VALUES(?,?,?,?,?,?,?,?)',
+             key,
+             p.name,
+             p.unit,
+             p.duration,
+             p.price_cents,
+             p.active,
++            periodUnit,
++            period,
+           ),
+       this.service.audit(id ? 'pos.plan.updated' : 'pos.plan.created', key),
+     ]);
+@@ -305,12 +317,14 @@
+           line.id,
+         );
+         if (!item || !item.active) throw new ApiError(409, 'El producto o plan ya no está disponible.');
+-        if (line.kind === 'plan' && item.unit === 'sessions' && (!p.sessions_until || p.sessions_until < start))
++        if (line.kind === 'plan' && item.unit === 'sessions' && p.sessions_until && p.sessions_until < start)
+           throw new ApiError(400, 'Indica la fecha límite para completar las sesiones, igual o posterior al inicio del plan.');
+         if (
+           line.kind === 'plan' &&
+           line.expected_plan &&
+-          (item.unit !== line.expected_plan.unit || item.duration !== line.expected_plan.duration)
++          (item.unit !== line.expected_plan.unit || item.duration !== line.expected_plan.duration ||
++            line.expected_plan.session_period_unit !== undefined && item.session_period_unit !== line.expected_plan.session_period_unit ||
++            line.expected_plan.session_period !== undefined && item.session_period !== line.expected_plan.session_period)
+         )
+           throw new ApiError(409, 'El plan cambió. Actualiza el catálogo y revisa la vigencia antes de confirmar.');
+         return { ...line, item, lineId: crypto.randomUUID() };
+@@ -392,7 +406,7 @@
+               item.duration,
+               item.price_cents,
+               start,
+-              item.unit === 'sessions' ? nextDate(p.sessions_until!, 1) : planEndDate(start, item.unit, item.duration),
++              item.unit === 'sessions' ? nextDate(p.sessions_until || defaultSessionUntil(start, item), 1) : planEndDate(start, item.unit, item.duration),
+               item.unit === 'sessions' ? item.duration : null,
+               item.unit === 'sessions' ? item.duration : null,
+               now,
+--- a/lib/replication.ts
++++ b/lib/replication.ts
+@@ -1,5 +1,6 @@
+ import { appearanceColumns } from './gym-appearance.ts';
+ import { sessionDeadlineTriggers } from './session-deadlines.ts';
++import { sessionPlanColumns } from './session-plans.ts';
+ import { productCostColumnSql, productCostTables } from './product-costs.ts';
+ export { productCostColumnSql, productCostTables };
+ export type SyncValue = string | number | null;
+@@ -51,12 +52,28 @@
+     const name = /CREATE TRIGGER (pos_one_plan|pos_access_use)\b/i.exec(sql)?.[1] as keyof typeof sessionDeadlineTriggers | undefined;
+     return name ? sessionDeadlineTriggers[name] : sql;
+   }), tables: appearance.tables.map(table => {
++    if (table.name === 'pos_plans') {
++      const missing = sessionPlanColumns.filter(field => !table.columns.some(column => column.name === field.name));
++      if (!missing.length) return table;
++      const sql = table.sql?.replace(/\)\s*$/, missing.map(field => ', ' + field.name + ' ' + field.sql).join('') + ')');
++      return { ...table, columns: [...table.columns, ...missing.map(field => ({ name: field.name, type: field.type, pk: 0 }))],
++        rows: table.rows.map(row => ({ ...Object.fromEntries(missing.map(field => [field.name, field.value])), ...row })), ...(sql ? { sql } : {}) };
++    }
+     if (!productCostTables.some(name => name === table.name) || table.columns.some(column => column.name === 'cost_cents')) return table;
+     const sql = table.sql && !/\bcost_cents\b/.test(table.sql)
+       ? table.sql.replace(/\)\s*$/, ', cost_cents ' + productCostColumnSql + ')') : table.sql;
+     return { ...table, columns: [...table.columns, { name: 'cost_cents', type: 'INTEGER', pk: 0 }],
+       rows: table.rows.map(row => ({ cost_cents: null, ...row })), ...(sql ? { sql } : {}) };
+   }) };
++}
++
++export function legacySessionPlanTable(table: SyncTable): SyncTable {
++  if (table.name !== 'pos_plans') return table;
++  let sql = table.sql;
++  for (const field of sessionPlanColumns) sql = sql?.replace(', ' + field.name + ' ' + field.sql, '');
++  const names = new Set<string>(sessionPlanColumns.map(field => field.name));
++  return { ...table, columns: table.columns.filter(column => !names.has(column.name)),
++    rows: table.rows.map(row => Object.fromEntries(Object.entries(row).filter(([name]) => !names.has(name)))), ...(sql ? { sql } : {}) };
+ }
+ 
+ /** Desktop versions before 5.3 cannot install snapshots containing these columns. */
+--- /dev/null
++++ b/lib/session-plans.ts
+@@ -0,0 +1,4 @@
++export const sessionPlanColumns = [
++  { name: 'session_period_unit', type: 'TEXT', sql: "TEXT NOT NULL DEFAULT 'months' CHECK(session_period_unit IN ('days','months'))", value: 'months' },
++  { name: 'session_period', type: 'INTEGER', sql: 'INTEGER NOT NULL DEFAULT 1 CHECK(session_period BETWEEN 1 AND 3660)', value: 1 },
++] as const;
+--- a/mobile/app.json
++++ b/mobile/app.json
+@@ -6,12 +6,12 @@
+       "ios",
+       "android"
+     ],
+-    "version": "5.4.0",
++    "version": "5.5.0",
+     "orientation": "default",
+     "userInterfaceStyle": "automatic",
+     "ios": {
+       "bundleIdentifier": "local.gympass.controlacceso.mobile",
+-      "buildNumber": "5400",
++      "buildNumber": "5500",
+       "supportsTablet": true,
+       "infoPlist": {
+         "NSLocalNetworkUsageDescription": "GymPASS se conecta con la computadora de la misma red Wi-Fi para registrar accesos.",
+@@ -24,7 +24,7 @@
+     },
+     "android": {
+       "package": "local.gympass.controlacceso.mobile",
+-      "versionCode": 5400,
++      "versionCode": 5500,
+       "permissions": [
+         "android.permission.CAMERA"
+       ],
+--- a/mobile/package-lock.json
++++ b/mobile/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "gympass-mobile",
+-  "version": "5.4.0",
++  "version": "5.5.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "gympass-mobile",
+-      "version": "5.4.0",
++      "version": "5.5.0",
+       "dependencies": {
+         "@noble/ciphers": "2.4.0",
+         "expo": "~58.0.21",
+--- a/mobile/package.json
++++ b/mobile/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "gympass-mobile",
+-  "version": "5.4.0",
++  "version": "5.5.0",
+   "private": true,
+   "type": "module",
+   "main": "index.ts",
+--- a/mobile/src/http.ts
++++ b/mobile/src/http.ts
+@@ -36,7 +36,7 @@
+         headers: {
+           'Content-Type': 'application/json',
+           'X-Requested-With': 'GymPASS',
+-          ...(path.includes('/sync/') ? { 'X-GymPASS-Product-Costs': '1' } : {}),
++          ...(path.includes('/sync/') ? { 'X-GymPASS-Product-Costs': '1', 'X-GymPASS-Session-Plans': '1' } : {}),
+           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+           ...(options.pairing ? { 'X-GymPASS-Pairing': options.pairing } : {}),
+         },
+--- a/mobile/src/offline.ts
++++ b/mobile/src/offline.ts
+@@ -7,6 +7,7 @@
+ import { appearanceColumns } from '../../lib/gym-appearance';
+ import { localParts } from '../../lib/domain';
+ import { sessionDeadlineTriggers } from '../../lib/session-deadlines';
++import { sessionPlanColumns } from '../../lib/session-plans';
+ import {
+   upgradeManagementSnapshot,
+   productCostColumnSql,
+@@ -233,6 +234,10 @@
+         await this.db.execAsync(`ALTER TABLE ${table} ADD COLUMN cost_cents ${productCostColumnSql}`);
+     }
+     const triggers = await this.db.getAllAsync<{ name: string; sql: string }>("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ('pos_one_plan','pos_access_use')");
++    const planFields = await this.db.getAllAsync<{ name: string }>('PRAGMA table_info(pos_plans)');
++    for (const field of sessionPlanColumns)
++      if (planFields.length && !planFields.some(column => column.name === field.name))
++        await this.db.execAsync(`ALTER TABLE pos_plans ADD COLUMN ${field.name} ${field.sql}`);
+     for (const trigger of triggers) {
+       const sql = sessionDeadlineTriggers[trigger.name as keyof typeof sessionDeadlineTriggers];
+       if (sql && trigger.sql !== sql) {
+--- a/mobile/tests/management.test.ts
++++ b/mobile/tests/management.test.ts
+@@ -1,5 +1,6 @@
+ import * as gymAppearanceModule from '../../lib/gym-appearance.ts';
+ import * as sessionDeadlines from '../../lib/session-deadlines.ts';
++import * as sessionPlans from '../../lib/session-plans.ts';
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { DatabaseSync } from 'node:sqlite';
+@@ -56,7 +57,7 @@
+     }; } },
+     'expo-crypto': { CryptoDigestAlgorithm: { SHA256: 'SHA-256' }, digestStringAsync: async (_: unknown, value: string) => createHash('sha256').update(value).digest('hex'), digest: async (_: unknown, value: Uint8Array) => webcrypto.subtle.digest('SHA-256', new Uint8Array(value)), getRandomValues: webcrypto.getRandomValues.bind(webcrypto), randomUUID },
+     'expo-secure-store': { getItemAsync: async (key: string) => secure.get(key) || null, setItemAsync: async (key: string, value: string) => { secure.set(key, value); } },
+-    '../../lib/service': service, '../../lib/domain': domain, '../../lib/replication': replication, '../../lib/session-deadlines': sessionDeadlines, '../../lib/gym-appearance': gymAppearanceModule, '../../lib/offline-management': management, './credential-codec': codec, './http': { request: network, ApiError },
++    '../../lib/service': service, '../../lib/domain': domain, '../../lib/replication': replication, '../../lib/session-plans': sessionPlans, '../../lib/session-deadlines': sessionDeadlines, '../../lib/gym-appearance': gymAppearanceModule, '../../lib/offline-management': management, './credential-codec': codec, './http': { request: network, ApiError },
+   };
+   const exports: any = {};
+   runInNewContext(ts.transpileModule(readFileSync(new URL('../src/offline.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, require: (name: string) => { if (!(name in dependencies)) throw Error(name); return dependencies[name]; }, crypto: webcrypto, URL, Date, Uint8Array, atob, btoa, setTimeout, clearTimeout, setInterval: (callback: () => void, ms: number) => { assert.equal(ms, 10000); automatic.push(callback); return setInterval(callback, ms); }, clearInterval, console });
+--- a/mobile/tests/offline.test.ts
++++ b/mobile/tests/offline.test.ts
+@@ -1,5 +1,6 @@
+ import * as gymAppearanceModule from '../../lib/gym-appearance.ts';
+ import * as sessionDeadlines from '../../lib/session-deadlines.ts';
++import * as sessionPlans from '../../lib/session-plans.ts';
+ import test from 'node:test';
+ import assert from 'node:assert/strict';
+ import { DatabaseSync } from 'node:sqlite';
+@@ -132,6 +133,7 @@
+       },
+       '../../lib/service': serviceModule,
+       '../../lib/session-deadlines': sessionDeadlines,
++      '../../lib/session-plans': sessionPlans,
+       '../../lib/domain': domain,
+       '../../lib/replication': replication, '../../lib/gym-appearance': gymAppearanceModule,
+       '../../lib/offline-management': management,
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "gympass-control-acceso",
+-  "version": "5.4.0",
++  "version": "5.5.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "gympass-control-acceso",
+-      "version": "5.4.0",
++      "version": "5.5.0",
+       "dependencies": {
+         "lucide-react": "1.57.0",
+         "qrcode-generator": "2.0.4",
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "gympass-control-acceso",
+-  "version": "5.4.0",
++  "version": "5.5.0",
+   "private": true,
+   "engines": {
+     "node": ">=24.0.0"
+--- /dev/null
++++ b/server/migrations/027_session_plan_period.sql
+@@ -0,0 +1,3 @@
++-- El plazo pertenece al catálogo. Las membresías ya cobradas conservan su fecha.
++ALTER TABLE pos_plans ADD COLUMN session_period_unit TEXT NOT NULL DEFAULT 'months' CHECK(session_period_unit IN ('days','months'));
++ALTER TABLE pos_plans ADD COLUMN session_period INTEGER NOT NULL DEFAULT 1 CHECK(session_period BETWEEN 1 AND 3660);
+--- a/server/replica-client.ts
++++ b/server/replica-client.ts
+@@ -180,6 +180,7 @@
+           "Content-Type": "application/json",
+           "X-Requested-With": "GymPASS",
+           "X-GymPASS-Product-Costs": "1",
++          'X-GymPASS-Session-Plans': '1',
+           ...headers,
+         },
+         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+--- a/server/replication-api.ts
++++ b/server/replication-api.ts
+@@ -149,11 +149,12 @@
+     authorizeReplica(store, ctx, token);
+   });
+   const productCosts = req.headers['x-gympass-product-costs'] === '1';
++  const sessionPlans = req.headers['x-gympass-session-plans'] === '1';
+   if (action === 'snapshot' && method === 'GET') {
+     const unchanged = await manager.withTenant(gym, async ctx => {
+       const { device, auth } = authorizeReplica(store, ctx, token);
+-      if (url.searchParams.get('revision') !== replicaRevision(ctx, device, productCosts)) return false;
+-      const metadata = await replicaMetadata(ctx, device, auth, productCosts);
++      if (url.searchParams.get('revision') !== replicaRevision(ctx, device, productCosts, sessionPlans)) return false;
++      const metadata = await replicaMetadata(ctx, device, auth, productCosts, sessionPlans);
+       authorizeReplica(store, ctx, token);
+       json(res, { ...metadata, unchanged: true });
+       return true;
+@@ -176,7 +177,7 @@
+         data_uri: `data:image/${String(person.photo_path).endsWith('.webp') ? 'webp' : 'png'};base64,${bytes.toString('base64')}` });
+     }
+     if (action === "snapshot" && method === "GET") {
+-      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts);
++      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts, undefined, sessionPlans);
+     }
+     if (action === "push" && method === "POST") {
+       const result = mergeReplica(ctx, device, auth, body as any);
+@@ -196,7 +197,7 @@
+             if (row) ids[String(change.after.id)] = Number(row.id);
+           }
+       if (result.status === 'conflict') return json(res, { ...result, event_ids: ids });
+-      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts, { ...result, event_ids: ids });
++      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts, { ...result, event_ids: ids }, sessionPlans);
+     }
+     throw new ApiError(404, "Operación de sincronización no disponible.");
+     });
+--- a/server/replication-stream.ts
++++ b/server/replication-stream.ts
+@@ -5,7 +5,8 @@
+ import type { ServerResponse } from 'node:http';
+ import type { TenantContext } from './tenant-manager.ts';
+ import { ApiError } from '../lib/service.ts';
+-import { legacyProductCostTable, type SyncRow, type SyncTable } from '../lib/replication.ts';
++import { legacyProductCostTable, legacySessionPlanTable, type SyncRow, type SyncTable } from '../lib/replication.ts';
++import { sessionPlanColumns } from '../lib/session-plans.ts';
+ import { authorizeReplica, replicaSchema, replicaMetadata } from './replication.ts';
+ import type { PlatformStore } from './platform-store.ts';
+ import { sendStream } from './stream-transfer.ts';
+@@ -36,20 +37,25 @@
+   else if (info.isFile()) yield name;
+ }
+ 
+-async function* snapshotChunks(ctx: TenantContext, metadata: Metadata, productCosts: boolean) {
++async function* snapshotChunks(ctx: TenantContext, metadata: Metadata, productCosts: boolean, sessionPlans: boolean) {
+   const management = metadata.kind === 'desktop' || metadata.scope === 'management';
+   const schema = replicaSchema(ctx.db.raw, management ? 'desktop' : 'mobile');
+   const triggers = ctx.db.raw.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name NOT LIKE 'sync_%' ORDER BY name").all().map(row => row.sql);
+   yield JSON.stringify(metadata).slice(0, -1) + ',"triggers":' + JSON.stringify(triggers) + ',"tables":[';
+   let firstTable = true;
+   for (const original of schema) {
+-    const table = productCosts ? original : legacyProductCostTable(original);
++    const compatible = sessionPlans ? original : legacySessionPlanTable(original);
++    const table = productCosts ? compatible : legacyProductCostTable(compatible);
+     yield (firstTable ? '' : ',') + JSON.stringify({ ...table, rows: undefined }).slice(0, -1) + ',"rows":[';
+     firstTable = false;
+     let batch = '', firstRow = true, count = 0;
+     const query = !management && original.name === 'events' ? mobileEvents : `SELECT * FROM "${original.name}" ORDER BY rowid`;
+     for (const value of ctx.db.raw.prepare(query).iterate()) {
+       let row = management ? value as SyncRow : mobileRow(original.name, value as SyncRow);
++      if (!sessionPlans && original.name === 'pos_plans') {
++        row = { ...row };
++        for (const field of sessionPlanColumns) delete row[field.name];
++      }
+       if (!productCosts && ['pos_products', 'pos_sale_lines'].includes(original.name)) {
+         const { cost_cents: _cost, ...compatible } = row;
+         row = compatible;
+@@ -94,11 +100,11 @@
+ /** Preserves protocol 1: installed Android and Windows clients need no update. */
+ export async function sendReplicaSnapshot(
+   ctx: TenantContext, res: ServerResponse, metadata: Metadata, productCosts: boolean,
+-  authorize: () => void, envelope?: Record<string, unknown>,
++  authorize: () => void, envelope?: Record<string, unknown>, sessionPlans = true,
+ ) {
+   const chunks = async function* () {
+     if (envelope) yield JSON.stringify(envelope).slice(0, -1) + ',"snapshot":';
+-    yield* snapshotChunks(ctx, metadata, productCosts);
++    yield* snapshotChunks(ctx, metadata, productCosts, sessionPlans);
+     if (envelope) yield '}';
+   };
+   await sendStream(res, chunks(), { 'Content-Type': 'application/json; charset=utf-8' }, authorize, true);
+@@ -108,9 +114,9 @@
+ export async function prepareReplicaSnapshot(
+   ctx: TenantContext, res: ServerResponse, device: Parameters<typeof replicaMetadata>[1],
+   auth: Parameters<typeof replicaMetadata>[2], store: PlatformStore, token: string,
+-  productCosts: boolean, envelope?: Record<string, unknown>,
++  productCosts: boolean, envelope?: Record<string, unknown>, sessionPlans = true,
+ ) {
+-  const metadata = await replicaMetadata(ctx, device, auth, productCosts);
++  const metadata = await replicaMetadata(ctx, device, auth, productCosts, sessionPlans);
+   const file = ctx.db.raw.location()!;
+   const reader = new DatabaseSync(file, { readOnly: true });
+   let authorization: DatabaseSync | undefined;
+@@ -137,7 +143,7 @@
+     const snapshotContext = { ...ctx, root: frozen || ctx.root, db: { raw: reader } as TenantContext['db'] };
+     return async () => {
+       try {
+-        await sendReplicaSnapshot(snapshotContext, res, metadata, productCosts, () => { authorizeReplica(store, authorizeContext, token, false); }, envelope);
++        await sendReplicaSnapshot(snapshotContext, res, metadata, productCosts, () => { authorizeReplica(store, authorizeContext, token, false); }, envelope, sessionPlans);
+       } finally { dispose(); }
+     };
+   } catch (error) { dispose(); throw error; }
+--- a/server/replication.ts
++++ b/server/replication.ts
+@@ -12,11 +12,13 @@
+ import type { DatabaseSync } from "node:sqlite";
+ import { ApiError, hash } from "../lib/service.ts";
+ import { localParts, withinSchedule } from "../lib/domain.ts";
++import { sessionPlanColumns } from '../lib/session-plans.ts';
+ import {
+   syncTables,
+   mobileSyncTables,
+   sameValue,
+   legacyProductCostTable,
++  legacySessionPlanTable,
+   syncKey,
+   type SyncSnapshot,
+   type SyncTable,
+@@ -215,7 +217,7 @@
+ }
+ 
+ /** Hash file metadata, never the photo contents, when checking an existing revision. */
+-export function replicaRevision(ctx: TenantContext, device: Device, productCosts = true) {
++export function replicaRevision(ctx: TenantContext, device: Device, productCosts = true, sessionPlans = true) {
+   initializeReplication(ctx.db.raw);
+   const files: unknown[] = [];
+   const walk = (name: string) => {
+@@ -231,12 +233,12 @@
+   return digest(JSON.stringify([
+     ctx.db.raw.prepare('SELECT epoch,version FROM sync_revision WHERE id=1').get(),
+     ctx.db.raw.prepare('PRAGMA schema_version').get(),
+-    device.kind, !!device.management, productCosts, files,
++    device.kind, !!device.management, productCosts, sessionPlans, files,
+   ]));
+ }
+ 
+-export async function replicaMetadata(ctx: TenantContext, device: Device, auth: GymAuthorization, productCosts = true) {
+-  const revision = replicaRevision(ctx, device, productCosts);
++export async function replicaMetadata(ctx: TenantContext, device: Device, auth: GymAuthorization, productCosts = true, sessionPlans = true) {
++  const revision = replicaRevision(ctx, device, productCosts, sessionPlans);
+   const now = Date.now();
+   const previous = ctx.db.raw.prepare(
+     'SELECT issued_at FROM sync_leases WHERE device_id=? AND revision=? AND expires_at>? ORDER BY issued_at DESC LIMIT 1',
+@@ -275,10 +277,11 @@
+   device: Device,
+   auth: GymAuthorization,
+   productCosts = true,
++  sessionPlans = true,
+ ): Promise<SyncSnapshot> {
+   const metadata = await replicaMetadata(ctx, device, auth, productCosts);
+   const currentTables = replicaTables(ctx.db.raw, device.management ? "desktop" : device.kind);
+-  const tables = productCosts ? currentTables : currentTables.map(legacyProductCostTable);
++  const tables = currentTables.map(table => sessionPlans ? table : legacySessionPlanTable(table)).map(table => productCosts ? table : legacyProductCostTable(table));
+   const assets =
+     device.kind === "desktop" || device.management ? replicaAssets(ctx.root) : undefined;
+   const triggers = (
+@@ -519,6 +522,10 @@
+               .prepare(`SELECT * FROM "${table.name}" WHERE ${where}`)
+               .get(...args) as SyncRow | undefined);
+       // Older clients never read these columns. Their edits must preserve the cloud cost.
++      if (table.name === 'pos_plans')
++        for (const value of [before, after])
++          for (const field of sessionPlanColumns)
++            if (value && !Object.prototype.hasOwnProperty.call(value, field.name)) value[field.name] = current?.[field.name] ?? field.value;
+       if (table.name === 'pos_products' || table.name === 'pos_sale_lines')
+         for (const value of [before, after])
+           if (value && !Object.prototype.hasOwnProperty.call(value, 'cost_cents'))
+--- a/src/AccessSounds.tsx
++++ b/src/AccessSounds.tsx
+@@ -1,15 +1,9 @@
+ import { useEffect, useRef, useState } from 'react';
+-import { isNaturalVoice, recordedAccessVoice, voiceGender, voiceIdentity, voiceRateLimits } from '../lib/access-feedback';
+-import { findGympassVoice, gympassVoiceId, gympassVoices } from '../lib/voice-catalog';
++import { accessVoiceMode, beepAccessVoice, recordedAccessVoice, voiceRateLimits } from '../lib/access-feedback';
+ import { Field } from './ui';
+ import { usePreferences, updatePreferences, type Preferences } from './preferences';
+-import { accessFeedback, prepareAccessVoice, prepareAudio, stopFeedback, subscribeAccessVoices } from './feedback';
++import { accessFeedback, prepareAccessVoice, prepareAudio, stopFeedback } from './feedback';
+ import './styles/appearance.css';
+-
+-const voiceGroups = [
+-  { gender: 'female', label: 'Voces femeninas de GymPASS' },
+-  { gender: 'male', label: 'Voces masculinas de GymPASS' },
+-] as const;
+ 
+ /** Avisos de entrada y salida: audios, voces y vibración de este dispositivo. */
+ export default function AccessSounds() {
+@@ -18,28 +12,25 @@
+   const [saveMessage, setSaveMessage] = useState('');
+   const draft = { ...preferences, ...changes };
+   const dirty = Object.entries(changes).some(([key, value]) => preferences[key as keyof Preferences] !== value);
+-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+   const [sampleName, setSampleName] = useState('María Pérez');
+   const [testing, setTesting] = useState(false);
+   const [previewMessage, setPreviewMessage] = useState('');
+   const previewId = useRef(0);
+   useEffect(() => {
+-    const unsubscribe = subscribeAccessVoices(setVoices);
+     return () => {
+-      unsubscribe();
+       previewId.current++;
+       stopFeedback();
+     };
+   }, []);
+ 
+-  const gympassVoice = findGympassVoice(draft.voiceURI);
+-  const recorded = draft.voiceURI === recordedAccessVoice;
+-  const selected = recorded || gympassVoice || voices.some((voice) => voiceIdentity(voice) === draft.voiceURI);
++  const mode = accessVoiceMode(draft.voiceURI);
++  const recorded = mode === recordedAccessVoice;
++  const beep = mode === beepAccessVoice;
++  const named = !recorded && !beep;
+   const voiceHint = recorded
+     ? 'Tus grabaciones: «Acceso permitido» cuando el código es válido y «Acceso denegado» cuando no lo es o está vencido. Se reproducen sin añadir nombres.'
+-    : gympassVoice
+-    ? 'La primera prueba descarga unos 110 MB. En recepción se usa una voz del dispositivo si la voz elegida tarda; los avisos generados se guardan para repetirlos al instante.'
+-    : 'La voz automática prioriza voces locales para responder rápido. Las voces anuncian el nombre también cuando el acceso es denegado.';
++    : beep ? 'Un beep para acceso correcto y otro distinto para acceso denegado. Sin voz ni nombres.'
++    : 'Una sola voz en español del dispositivo anuncia la entrada, salida o acceso denegado junto con el nombre. Sin descargar modelos.';
+   const cancelPreview = () => {
+     previewId.current++;
+     setTesting(false);
+@@ -66,20 +57,19 @@
+     setSaveMessage(stored ? 'Cambios guardados en este navegador.' : 'Cambios aplicados durante esta sesión.');
+   };
+   const selectVoice = (id: string) => {
+-    const voice = voices.find((choice) => voiceIdentity(choice) === id);
+-    changeVoice({ voiceURI: id, voiceGender: findGympassVoice(id)?.gender ?? (voice ? voiceGender(voice) : 'auto') });
++    changeVoice({ voiceURI: accessVoiceMode(id), voiceGender: 'auto' });
+   };
+   const preview = async (direction: 'entry' | 'exit', allowed = true) => {
+     const id = ++previewId.current;
+     setTesting(true);
+-    setPreviewMessage(recorded ? 'Reproduciendo el audio…' : gympassVoice ? `Preparando la voz de ${gympassVoice.name}…` : 'Probando la voz…');
++    setPreviewMessage(named ? 'Probando la voz con nombre…' : 'Reproduciendo el sonido…');
+     const played = await accessFeedback(allowed, true, false, direction, sampleName.trim() || 'María Pérez', draft, true);
+     if (id !== previewId.current) return;
+     setTesting(false);
+     setPreviewMessage(played === 'none' ? 'No se pudo reproducir el aviso. Comprueba el audio del dispositivo.'
+-      : played === 'tone' ? 'No se pudo reproducir el aviso seleccionado. Se usó el tono de confirmación.'
++      : played === 'tone' ? beep ? `Beep de acceso ${allowed ? 'correcto' : 'denegado'} reproducido.` : 'La voz no está disponible. Se reprodujo el beep de confirmación.'
+       : played === 'recorded' ? `Audio de acceso ${allowed ? 'permitido' : 'denegado'} reproducido.`
+-      : gympassVoice && played === 'device' ? 'No se pudo cargar esta voz. Se usó una voz del dispositivo.' : '');
++      : '');
+   };
+   return (
+     <section className="panel padded appearance-panel">
+@@ -107,37 +97,22 @@
+       <section className="access-voice-settings" aria-label="Avisos de voz">
+         <h3>Sonidos y voces</h3>
+         <div className="form-grid">
+-          <Field label="Voz de los avisos" hint={voiceHint}>
+-            <select value={selected ? draft.voiceURI : ''} onChange={(event) => selectVoice(event.target.value)}>
++          <Field label="Tipo de aviso" hint={voiceHint}>
++            <select value={mode} onChange={(event) => selectVoice(event.target.value)}>
++              <option value="">Voz con nombre</option>
+               <option value={recordedAccessVoice}>Audios de acceso permitido y denegado</option>
+-              <option value="">Automática (voz del dispositivo)</option>
+-              {voiceGroups.map(({ gender, label }) => (
+-                <optgroup key={gender} label={label}>
+-                  {gympassVoices.filter((voice) => voice.gender === gender).map((voice) => (
+-                    <option key={gympassVoiceId(voice)} value={gympassVoiceId(voice)}>{voice.name}</option>
+-                  ))}
+-                </optgroup>
+-              ))}
+-              {voices.length > 0 && (
+-                <optgroup label="Voces del dispositivo">
+-                  {voices.map((voice) => (
+-                    <option key={voiceIdentity(voice)} value={voiceIdentity(voice)}>
+-                      {voice.name} · {voice.lang}{isNaturalVoice(voice) && !/natural/i.test(voice.name) ? ' · Natural' : ''}
+-                    </option>
+-                  ))}
+-                </optgroup>
+-              )}
++              <option value={beepAccessVoice}>Beeps: correcto y denegado</option>
+             </select>
+           </Field>
+-          {!recorded && <Field label={`Velocidad de voz (${Math.round(draft.voiceRate * 100)} %)`} hint="De 50 % a 300 %. 100 % es la velocidad normal.">
++          {named && <Field label={`Velocidad de voz (${Math.round(draft.voiceRate * 100)} %)`} hint="De 50 % a 300 %. 100 % es la velocidad normal.">
+             <input type="range" {...voiceRateLimits} value={draft.voiceRate} onChange={(event) => changeVoice({ voiceRate: event.target.valueAsNumber })} />
+           </Field>}
+-          {!recorded && <Field label="Nombre para probar">
++          {named && <Field label="Nombre para probar">
+             <input value={sampleName} maxLength={80} onChange={(event) => setSampleName(event.target.value)} />
+           </Field>}
+         </div>
+         <div className="voice-preview-actions">
+-          {recorded ? (
++          {!named ? (
+             <>
+               <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('entry')}>Probar acceso permitido</button>
+               <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('entry', false)}>Probar acceso denegado</button>
+--- a/src/AppDownloads.tsx
++++ b/src/AppDownloads.tsx
+@@ -1,8 +1,8 @@
+-import { Download, Monitor, Smartphone } from 'lucide-react';
++﻿import { Download, Monitor, Smartphone } from 'lucide-react';
+ import './styles/app-downloads.css';
+ 
+-const release = 'https://github.com/DiegoVargasZ/gympass/releases/download/v5.4.0/';
+-const androidApk = release + 'GymPASS-Android-5.4.0.apk';
++const release = 'https://github.com/DiegoVargasZ/gympass/releases/download/v5.5.0/';
++const androidApk = release + 'GymPASS-Android-5.5.0.apk';
+ 
+ export default function AppDownloads() {
+   if (
+@@ -22,20 +22,20 @@
+           <Smartphone size={24} aria-hidden="true" />
+           <span>
+             <strong>Móvil Android</strong>
+-            <small>Descargar APK · v5.4.0</small>
++            <small>Descargar APK · v5.5.0</small>
+           </span>
+           <Download size={16} aria-hidden="true" />
+         </a>
+         <a
+           className="app-download"
+-          href={release + 'GymPASS-Setup-5.4.0.exe'}
++          href={release + 'GymPASS-Setup-5.5.0.exe'}
+           target="_blank"
+           rel="noopener noreferrer"
+         >
+           <Monitor size={24} aria-hidden="true" />
+           <span>
+             <strong>Escritorio Windows</strong>
+-            <small>Descargar instalador · v5.4.0</small>
++            <small>Descargar instalador · v5.5.0</small>
+           </span>
+           <Download size={16} aria-hidden="true" />
+         </a>
+--- a/src/People.tsx
++++ b/src/People.tsx
+@@ -29,7 +29,7 @@
+   type PersonSummary,
+   type Credential,
+ } from '../lib/domain';
+-import { planEndDate, defaultSessionUntil, type PosCatalog, type PosPlan, type PosCheckout, type PosSaleDetail } from '../lib/pos-types';
++import { planEndDate, defaultSessionUntil, planDurationLabel, type PosCatalog, type PosPlan, type PosCheckout, type PosSaleDetail } from '../lib/pos-types';
+ import { usePeople } from './usePeople';
+ import { qrSvg } from '../lib/qr';
+ import type { CardData } from '../lib/card';
+@@ -67,7 +67,7 @@
+   const selectedPlan = !person && planHolder(kind) ? plans?.find((plan) => plan.id === planId) : undefined;
+   const today = person ? data.today : localParts(new Date(), data.settings.timezone).date;
+   const end = selectedPlan ? planEndDate(today, selectedPlan.unit, selectedPlan.duration) : null;
+-  const deadline = selectedPlan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(today) : '';
++  const deadline = selectedPlan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(today, selectedPlan) : '';
+   async function loadPlans(signal?: AbortSignal) {
+     try {
+       const catalog = await api<PosCatalog>('pos/catalog', 'GET', undefined, signal);
+@@ -128,7 +128,8 @@
+                     kind: 'plan',
+                     id: selectedPlan!.id,
+                     quantity: 1,
+-                    expected_plan: { unit: selectedPlan!.unit, duration: selectedPlan!.duration },
++                    expected_plan: { unit: selectedPlan!.unit, duration: selectedPlan!.duration,
++                      session_period_unit: selectedPlan!.session_period_unit || 'months', session_period: selectedPlan!.session_period || 1 },
+                   },
+                 ],
+               };
+@@ -225,13 +226,12 @@
+                   name="plan_id"
+                   value={planId}
+                   disabled={!plans}
+-                  onChange={(event) => setPlanId(event.target.value)}
++                  onChange={(event) => { setPlanId(event.target.value); setSessionsUntil(null); }}
+                 >
+                   <option value="">{plans ? 'Sin plan por ahora' : 'Cargando planes…'}</option>
+                   {plans?.map((plan) => (
+                     <option key={plan.id} value={plan.id}>
+-                      {plan.name} · {plan.duration}{' '}
+-                      {plan.unit === 'days' ? 'día(s)' : plan.unit === 'months' ? 'mes(es)' : 'sesión(es)'} ·{' '}
++                      {plan.name} · {planDurationLabel(plan)} ·{' '}
+                       {new Intl.NumberFormat('es-BO', { style: 'currency', currency: 'BOB' }).format(
+                         plan.price_cents / 100,
+                       )}
+--- a/src/PersonMemberships.tsx
++++ b/src/PersonMemberships.tsx
+@@ -3,6 +3,7 @@
+ import {
+   planEndDate,
+   defaultSessionUntil,
++  planDurationLabel,
+   type MembershipSummary,
+   type PlanGate,
+   type PosCatalog,
+@@ -221,7 +222,7 @@
+   }, [open, personId, today]);
+   const plan = plans?.find((item) => item.id === planId);
+   const end = plan && start ? planEndDate(start, plan.unit, plan.duration) : null;
+-  const deadline = plan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(start || today) : '';
++  const deadline = plan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(start || today, plan) : '';
+   if (!open)
+     return (
+       <button className="btn secondary" onClick={() => setOpen(true)}>
+@@ -256,7 +257,8 @@
+                 kind: 'plan',
+                 id: plan.id,
+                 quantity: 1,
+-                expected_plan: { unit: plan.unit, duration: plan.duration },
++                expected_plan: { unit: plan.unit, duration: plan.duration,
++                  session_period_unit: plan.session_period_unit || 'months', session_period: plan.session_period || 1 },
+               },
+             ],
+           };
+@@ -268,12 +270,11 @@
+       >
+         <div className="form-grid">
+           <Field label="Plan" hint="Los planes se administran en Caja y planes > Planes.">
+-            <select value={planId} disabled={!plans} onChange={(event) => setPlanId(event.target.value)}>
++            <select value={planId} disabled={!plans} onChange={(event) => { setPlanId(event.target.value); setSessionsUntil(null); }}>
+               <option value="">{plans ? 'Elige un plan' : 'Cargando planes…'}</option>
+               {plans?.map((item) => (
+                 <option key={item.id} value={item.id}>
+-                  {item.name} · {item.duration}{' '}
+-                  {item.unit === 'days' ? 'día(s)' : item.unit === 'months' ? 'mes(es)' : 'sesión(es)'} ·{' '}
++                  {item.name} · {planDurationLabel(item)} ·{' '}
+                   {new Intl.NumberFormat('es-BO', { style: 'currency', currency: 'BOB' }).format(
+                     item.price_cents / 100,
+                   )}
+--- a/src/Pos.tsx
++++ b/src/Pos.tsx
+@@ -5,6 +5,7 @@
+ import {
+   planEndDate,
+   defaultSessionUntil,
++  planDurationLabel,
+   type PosCatalog,
+   type PosCheckout,
+   type PlanGate,
+@@ -28,8 +29,7 @@
+ const money = (cents: number) =>
+   new Intl.NumberFormat('es-BO', { style: 'currency', currency: 'BOB' }).format(cents / 100);
+ const methods: Record<PaymentMethod, string> = { cash: 'Efectivo', transfer: 'Transferencia o QR', card: 'Tarjeta' };
+-const duration = (plan: PosPlan) =>
+-  `${plan.duration} ${plan.unit === 'days' ? 'día(s)' : plan.unit === 'months' ? 'mes(es)' : 'sesión(es)'}`;
++const duration = planDurationLabel;
+ export function lastValidDate(exclusive: string) {
+   const value = new Date(exclusive + 'T12:00:00Z');
+   value.setUTCDate(value.getUTCDate() - 1);
+@@ -106,7 +106,8 @@
+   const hasPlan = cart.some((line) => line.kind === 'plan');
+   const hasSessions = cart.some((line) => line.kind === 'plan' && catalog.plans.find((plan) => plan.id === line.id)?.unit === 'sessions');
+   const sessionStart = newMember ? data.today : start;
+-  const deadline = hasSessions ? sessionsUntil ?? defaultSessionUntil(sessionStart || data.today) : '';
++  const sessionPlan = catalog.plans.find(plan => plan.unit === 'sessions' && cart.some(line => line.kind === 'plan' && line.id === plan.id));
++  const deadline = hasSessions ? sessionsUntil ?? defaultSessionUntil(sessionStart || data.today, sessionPlan) : '';
+   useEffect(() => {
+     if (hasPlan) return;
+     setNewMember(undefined);
+@@ -156,6 +157,7 @@
+   }, [personQuery, people.rows, people.busy, people.error, locked, newMember]);
+   function change(kind: CartLine['kind'], id: string, delta: number) {
+     if (locked) return;
++    if (kind === 'plan') setSessionsUntil(null);
+     setCart((current) => {
+       // Un socio solo puede tener un plan: elegir otro lo reemplaza en el cobro, siempre de a uno.
+       if (kind === 'plan' && delta > 0)
+@@ -275,6 +277,8 @@
+                         expected_plan: {
+                           unit: (itemFor(line) as PosPlan).unit,
+                           duration: (itemFor(line) as PosPlan).duration,
++                          session_period_unit: (itemFor(line) as PosPlan).session_period_unit || 'months',
++                          session_period: (itemFor(line) as PosPlan).session_period || 1,
+                         },
+                       }
+                     : {}),
+@@ -310,6 +314,7 @@
+               clearPending();
+               setUncertain(false);
+               setCart([]);
++              setSessionsUntil(null);
+               setNewMember(undefined);
+               setPerson(null);
+               setPersonQuery('');
+@@ -672,6 +677,7 @@
+   const savedId = useRef(item?.id);
+   const product = kind === 'product' ? (item as PosProduct | undefined) : undefined;
+   const plan = kind === 'plan' ? (item as PosPlan | undefined) : undefined;
++  const [planUnit, setPlanUnit] = useState(plan?.unit || 'months');
+   const [cost, setCost] = useState(product?.cost_cents == null ? '' : (product.cost_cents / 100).toFixed(2));
+   const [salePrice, setSalePrice] = useState(((item?.price_cents || 0) / 100).toFixed(2));
+   const amount = (value: string) => /^\d+(?:[.,]\d{1,2})?$/.test(value.trim())
+@@ -703,7 +709,8 @@
+                     track_stock: form.get('track_stock') === '1' ? 1 : 0,
+                     ...(!item ? { stock: Number(form.get('stock') || 0) } : {}),
+                   }
+-                : { unit: form.get('unit'), duration: Number(form.get('duration')) }),
++                : { unit: form.get('unit'), duration: Number(form.get('duration')),
++                    ...(planUnit === 'sessions' ? { session_period_unit: form.get('session_period_unit'), session_period: Number(form.get('session_period')) } : {}) }),
+             },
+           );
+           savedId.current = result.id;
+@@ -761,13 +768,13 @@
+         ) : (
+           <div className="form-grid">
+             <Field label="Modalidad">
+-              <select name="unit" defaultValue={plan?.unit || 'months'}>
++              <select name="unit" value={planUnit} onChange={event => setPlanUnit(event.target.value as PosPlan['unit'])}>
+                 <option value="days">Días</option>
+                 <option value="months">Meses</option>
+                 <option value="sessions">Sesiones</option>
+               </select>
+             </Field>
+-            <Field label="Duración / cantidad" hint="Un año equivale a 12 meses.">
++            <Field label={planUnit === 'sessions' ? 'Cantidad de sesiones' : 'Duración / cantidad'} hint={planUnit === 'sessions' ? 'Total de entradas incluidas en el paquete.' : 'Un año equivale a 12 meses.'}>
+               <input
+                 name="duration"
+                 type="number"
+@@ -778,6 +785,17 @@
+                 defaultValue={plan?.duration || 1}
+               />
+             </Field>
++            {planUnit === 'sessions' && <>
++              <Field label="Plazo para completar las sesiones" hint="Por ejemplo: 15 sesiones para completar en 1 mes.">
++                <input type="number" name="session_period" required min="1" max="120" step="1" defaultValue={plan?.session_period || 1} />
++              </Field>
++              <Field label="Unidad del plazo">
++                <select name="session_period_unit" defaultValue={plan?.session_period_unit || 'months'}>
++                  <option value="months">Meses</option>
++                  <option value="days">Días</option>
++                </select>
++              </Field>
++            </>}
+           </div>
+         )}
+         <Field label="Estado">
+@@ -1201,7 +1219,7 @@
+     await refreshCatalog().catch((reason) => notify('El cambio se guardó. ' + errorText(reason), true));
+   };
+   return (
+-    <div className={'pos-page' + (tab === 'reports' ? ' pos-page-flow' : '')}>
++    <div className={'pos-page' + (tab === 'reports' || tab === 'checkout' ? ' pos-page-flow' : '')}>
+       <div className="page-heading">
+         <div>
+           <h1>Caja y planes</h1>
+--- a/src/feedback.ts
++++ b/src/feedback.ts
+@@ -1,8 +1,7 @@
+ import {
+   defaultVoiceSettings, feedbackAnnouncement, feedbackSound, normalizeVoiceSettings, preferredSpanishVoice,
+-  recordedAccessSound, recordedAccessVoice, voiceGender, voiceIdentity, type VoiceSettings,
++  beepAccessVoice, recordedAccessSound, recordedAccessVoice, voiceGender, voiceIdentity, type VoiceSettings,
+ } from '../lib/access-feedback';
+-import { findGympassVoice, type GympassVoice } from '../lib/voice-catalog';
+ let context: AudioContext | undefined;
+ const buffers = new Map<string, Promise<AudioBuffer>>();
+ let playing: AudioBufferSourceNode | undefined;
+@@ -11,31 +10,6 @@
+ declare global {
+   interface Window {
+     __gympassNativeVoice?: { speak(text: string, rate: number): Promise<boolean>; stop(): void };
+-  }
+-}
+-
+-function deadline<T>(work: Promise<T>, milliseconds: number): Promise<T | undefined> {
+-  return new Promise((resolve, reject) => {
+-    const timer = setTimeout(() => resolve(undefined), milliseconds);
+-    void work.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+-  });
+-}
+-
+-async function playGympassVoice(voice: GympassVoice, text: string, rate: number, current: number, preview: boolean) {
+-  try {
+-    if (!context || typeof Worker === 'undefined') return false;
+-    const engine = await import('./voice-engine');
+-    // La generación sigue en segundo plano y queda en caché. El lector nunca
+-    // espera la descarga de modelos ni varios segundos de inferencia.
+-    const work = engine.prepareGympassVoice(voice.preset).then(() =>
+-      current === sequence ? engine.renderGympassVoice(voice.preset, text, rate) : undefined);
+-    const audio = preview ? await work : await deadline(work, 250);
+-    if (!audio || current !== sequence || context.state !== 'running') return false;
+-    const decoded = context.createBuffer(1, audio.samples.length, audio.sampleRate);
+-    decoded.copyToChannel(audio.samples, 0);
+-    return playBuffer(decoded);
+-  } catch {
+-    return false;
+   }
+ }
+ 
+@@ -145,10 +119,8 @@
+   }
+   return buffers.get(name)!;
+ }
+-export function prepareAccessVoice(voiceURI: string) {
+-  const voice = findGympassVoice(voiceURI);
+-  if (voice && typeof Worker !== 'undefined')
+-    void import('./voice-engine').then((engine) => engine.prepareGympassVoice(voice.preset)).catch(() => {});
++export function prepareAccessVoice(_voiceURI: string) {
++  try { speechEngine()?.getVoices(); } catch {}
+ }
+ 
+ export function prepareAudio() {
+@@ -203,15 +175,12 @@
+       } catch {
+         // Keep the original confirmation tone if a recording cannot be loaded.
+       }
+-    } else {
+-      const voice = findGympassVoice(options.voiceURI);
+-      if (voice && await playGympassVoice(voice, feedbackAnnouncement(direction, personName, allowed), options.voiceRate, current, preview))
+-        return 'gympass';
++    } else if (options.voiceURI !== beepAccessVoice) {
+       if (current !== sequence) return 'none';
+-      if (await announce(direction, personName, current, options, allowed)) return current === sequence ? 'device' : 'none';
++      if (await announce(direction, personName, current, { ...options, voiceURI: '', voiceGender: 'auto' }, allowed)) return current === sequence ? 'device' : 'none';
+     }
+     if (current !== sequence || !context) return 'none';
+-    const decoded = await buffer(feedbackSound({ allowed: Number(allowed), direction }));
++    const decoded = await buffer(options.voiceURI === beepAccessVoice ? (allowed ? 'entry' : 'denied') : feedbackSound({ allowed: Number(allowed), direction }));
+     if (current === sequence && playBuffer(decoded)) return 'tone';
+   } catch {
+     /* Audio failure must never interrupt access registration. */
+--- a/src/preferences.ts
++++ b/src/preferences.ts
+@@ -1,6 +1,6 @@
+ import { useSyncExternalStore } from 'react';
+ import { accentProperties, accentTokens, defaultAccent, normalizeAccent } from '../lib/accent';
+-import { defaultVoiceSettings, normalizeVoiceSettings, recordedAccessVoice, type VoiceSettings } from '../lib/access-feedback';
++import { accessVoiceMode, defaultVoiceSettings, normalizeVoiceSettings, recordedAccessVoice, type VoiceSettings } from '../lib/access-feedback';
+ import { gymAppearance, defaultGymAppearance, type GymAppearance } from '../lib/gym-appearance';
+ import type { Settings } from '../lib/domain';
+ 
+@@ -15,7 +15,7 @@
+   vibration: boolean;
+ };
+ const key = 'gympass.preferences';
+-const preferencesVersion = 4;
++const preferencesVersion = 5;
+ let user = '';
+ const listeners = new Set<() => void>();
+ function load(): Preferences {
+@@ -36,8 +36,8 @@
+       vibration: saved.vibration === true,
+       ...normalizeVoiceSettings({
+         ...saved,
+-        voiceURI: typeof saved.voiceURI === 'string' && (saved.version === preferencesVersion || saved.voiceURI !== '')
+-          ? saved.voiceURI : recordedAccessVoice,
++        voiceURI: typeof saved.voiceURI === 'string' ? accessVoiceMode(saved.voiceURI) : recordedAccessVoice,
++        voiceGender: 'auto',
+       }),
+     };
+   } catch {
+@@ -101,6 +101,8 @@
+     ...preferences,
+     ...change,
+     ...normalizeVoiceSettings({ ...preferences, ...change }),
++    voiceURI: accessVoiceMode(change.voiceURI ?? preferences.voiceURI),
++    voiceGender: 'auto',
+     accent: normalizeAccent(change.accent ?? preferences.accent),
+   };
+   let stored = true;
+--- a/src/styles/desktop-fit.css
++++ b/src/styles/desktop-fit.css
+@@ -56,6 +56,36 @@
+   .app-shell .pos-page.pos-page-flow {
+     display: block;
+     height: auto;
++  }
++
++  .app-shell .pos-page-flow .pos-checkout {
++    height: auto;
++    align-items: start;
++    grid-template-columns: minmax(0, 1.6fr) minmax(340px, 1fr);
++  }
++
++  .app-shell .pos-page-flow .pos-checkout-tab,
++  .app-shell .pos-page-flow .pos-catalog-items,
++  .app-shell .pos-page-flow .pos-catalog-group {
++    flex: none;
++    min-height: auto;
++  }
++
++  .app-shell .pos-page-flow .pos-items {
++    overflow: visible;
++    min-height: auto;
++  }
++
++  .app-shell .pos-page-flow .pos-cart {
++    position: sticky;
++    top: 20px;
++    max-height: calc(100dvh - var(--platform-bar-height, 0px) - 40px);
++    overflow-y: auto;
++  }
++
++  .app-shell .pos-page-flow .pos-cart > .form > fieldset {
++    flex: none;
++    overflow: visible;
+   }
+ 
+   .app-shell .pos-tabs {
+--- a/tests/access-feedback.test.ts
++++ b/tests/access-feedback.test.ts
+@@ -1,7 +1,7 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ import { componentHarness } from './component-harness.ts';
+-import { defaultVoiceSettings, recordedAccessVoice } from '../lib/access-feedback.ts';
++import { beepAccessVoice, defaultVoiceSettings, recordedAccessVoice } from '../lib/access-feedback.ts';
+ 
+ function fixture(t: test.TestContext, options: { speech?: boolean; audio?: boolean; delayedVoices?: boolean; silent?: boolean; recordingDelay?: Promise<void>; recordingsFail?: boolean } = {}) {
+   const spoken: any[] = [];
+@@ -61,6 +61,15 @@
+   };
+ }
+ 
++test('beeps: entradas y salidas correctas usan un beep y el rechazo otro, sin voz', async t => {
++  const f = fixture(t);
++  const options = { ...defaultVoiceSettings, voiceURI: beepAccessVoice };
++  for (const [allowed, direction] of [[true, 'entry'], [true, 'exit'], [false, 'entry']] as const)
++    assert.equal(await f.api.accessFeedback(allowed, true, false, direction, 'Ana', options), 'tone');
++  assert.deepEqual(f.tones, ['/sounds/entry.wav', '/sounds/entry.wav', '/sounds/denied.wav']);
++  assert.deepEqual(f.spoken, []);
++});
++
+ test('entrada y salida pronuncian el nombre con voz española y conservan la vibración', async (t) => {
+   const f = fixture(t);
+   f.api.accessFeedback(true, true, true, 'entry', 'Ana Pérez');
+@@ -121,7 +130,7 @@
+   assert.equal(f.spoken[1].voice, raul);
+ });
+ 
+-test('si falla la voz en línea, intenta una voz local del mismo tipo antes de usar el tono', async (t) => {
++test('elige una sola voz local y conserva el beep si no puede hablar', async (t) => {
+   const f = fixture(t);
+   const jorge = { ...f.voice, name: 'Microsoft Jorge Online (Natural)', voiceURI: 'jorge' };
+   const raul = { ...f.voice, name: 'Raúl', voiceURI: 'raul', localService: true };
+@@ -129,13 +138,10 @@
+   f.loadVoices([f.voice, jorge, helena, raul]);
+   f.api.accessFeedback(true, true, false, 'entry', 'José', { voiceURI: 'jorge', voiceGender: 'auto', voiceRate: 1 });
+   await f.settle();
+-  assert.equal(f.spoken[0].voice, jorge);
++  assert.equal(f.spoken[0].voice, helena);
+   f.spoken[0].onerror();
+   await f.settle();
+-  assert.equal(f.spoken[1].voice, raul);
+-  assert.deepEqual(f.tones, []);
+-  f.spoken[1].onerror();
+-  await f.settle();
++  assert.equal(f.spoken.length, 1);
+   assert.deepEqual(f.tones, ['/sounds/entry.wav']);
+ });
+ 
+--- a/tests/access-recordings.test.ts
++++ b/tests/access-recordings.test.ts
+@@ -23,8 +23,8 @@
+ 
+ for (const [saved, expected] of [
+   [{}, recordedAccessVoice],
+-  [{ version: 3, voiceURI: '', sound: true }, recordedAccessVoice],
+-  [{ version: 3, voiceURI: 'gympass:F3', sound: false }, 'gympass:F3'],
++  [{ version: 3, voiceURI: '', sound: true }, ''],
++  [{ version: 3, voiceURI: 'gympass:F3', sound: false }, ''],
+   [{ version: 4, voiceURI: '', sound: true }, ''],
+ ] as const) {
+   test(`la selección de audio respeta las preferencias guardadas: ${JSON.stringify(saved)}`, t => {
+@@ -39,7 +39,7 @@
+     assert.equal(value.voiceURI, expected);
+     assert.equal(value.sound, 'sound' in saved && saved.sound);
+     preferences.updatePreferences({ voiceURI: recordedAccessVoice });
+-    assert.equal(stored.version, 4);
++    assert.equal(stored.version, 5);
+     assert.equal(stored.voiceURI, recordedAccessVoice);
+   });
+ }
+--- a/tests/release-version.test.ts
++++ b/tests/release-version.test.ts
+@@ -2,14 +2,14 @@
+ import { test } from 'node:test';
+ import { readFile } from 'node:fs/promises';
+ 
+-test('web, Android y Windows usan 5.4.0', async () => {
++test('web, Android y Windows usan 5.5.0', async () => {
+   for (const path of ['package.json', 'desktop/package.json', 'desktop-runtime/package.json']) {
+     const manifest = JSON.parse(await readFile(new URL('../' + path, import.meta.url), 'utf8'));
+-    assert.equal(manifest.version, '5.4.0', path);
++    assert.equal(manifest.version, '5.5.0', path);
+   }
+   const app = JSON.parse(await readFile(new URL('../mobile/app.json', import.meta.url), 'utf8'));
+-  assert.equal(JSON.parse(await readFile(new URL('../mobile/package.json', import.meta.url), 'utf8')).version, '5.4.0');
+-  assert.equal(app.expo.version, '5.4.0');
+-  assert.equal(app.expo.android.versionCode, 5400);
+-  assert.equal(app.expo.ios.buildNumber, '5400');
++  assert.equal(JSON.parse(await readFile(new URL('../mobile/package.json', import.meta.url), 'utf8')).version, '5.5.0');
++  assert.equal(app.expo.version, '5.5.0');
++  assert.equal(app.expo.android.versionCode, 5500);
++  assert.equal(app.expo.ios.buildNumber, '5500');
+ });
+--- a/tests/session-deadlines.test.ts
++++ b/tests/session-deadlines.test.ts
+@@ -20,13 +20,14 @@
+   return { db, service, pos, person, plan, sell, scan };
+ }
+ 
+-test('sesiones: exige una fecha válida sin registrar cobros al faltar o preceder al inicio', async t => {
++test('sesiones: rechaza fechas inválidas y calcula el plazo del plan al omitir la fecha', async t => {
+   const { sell, db } = await fixture(t);
+-  for (const extra of [{}, { sessions_until: '2026-11-13' }, { sessions_until: '2026-02-30' }])
++  for (const extra of [{ sessions_until: '2026-11-13' }, { sessions_until: '2026-02-30' }])
+     await assert.rejects(sell(extra));
+   assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM pos_sales').get()!.n, 0);
+   assert.equal(defaultSessionUntil('2026-11-14'), '2026-12-13');
+   assert.equal(defaultSessionUntil('2026-01-31'), '2026-02-27');
++  assert.equal((await sell()).memberships[0].end_date, '2026-12-14');
+ });
+ 
+ test('sesiones: incluye el último día local y bloquea después sin descontar sesiones', async t => {
+@@ -67,3 +68,24 @@
+   await assert.rejects(sell({ request_id, sessions_until: '2026-12-14' }), /identificador/);
+   assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM pos_sales').get()!.n, 1);
+ });
++
++test('el plazo del catálogo se calcula en meses y no altera paquetes ya cobrados', async t => {
++  const { pos, plan, sell, db } = await fixture(t);
++  await pos.savePlan({ ...plan, session_period_unit: 'months', session_period: 2 }, plan.id);
++  const first = await sell();
++  assert.equal(first.memberships[0].end_date, '2027-01-14');
++  await pos.savePlan({ ...plan, session_period_unit: 'days', session_period: 14 }, plan.id);
++  assert.equal(db.raw.prepare('SELECT end_date FROM pos_memberships WHERE id=?').get(first.memberships[0].id)!.end_date, '2027-01-14');
++  assert.equal(defaultSessionUntil('2026-11-14', { session_period_unit: 'days', session_period: 14 }), '2026-11-27');
++});
++
++test('editar desde un cliente anterior conserva el plazo y un catálogo cambiado exige revisar el cobro', async t => {
++  const { pos, plan, person, sell, db } = await fixture(t);
++  await pos.savePlan({ ...plan, session_period: 3, session_period_unit: 'months' }, plan.id);
++  const edited = await pos.savePlan({ name: '15 sesiones nuevas', unit: 'sessions', duration: 15, price_cents: 15000 }, plan.id);
++  assert.equal(edited.session_period, 3);
++  await assert.rejects(sell({ lines: [{ kind: 'plan', id: plan.id, quantity: 1, expected_plan: { unit: 'sessions', duration: 15, session_period: 1, session_period_unit: 'months' } }] }), /El plan cambió/);
++  assert.equal(db.raw.prepare('SELECT COUNT(*) n FROM pos_sales').get()!.n, 0);
++  const sale = await pos.checkout({ request_id: randomUUID(), person_id: person.id, payment_method: 'cash', lines: [{ kind: 'plan', id: plan.id, quantity: 1 }] });
++  assert.equal(sale.memberships[0].end_date, '2027-02-14');
++});
+--- /dev/null
++++ b/tests/session-plan-schema.test.ts
+@@ -0,0 +1,18 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { DatabaseSync } from 'node:sqlite';
++import { SqliteDatabase } from '../server/database.ts';
++import { legacySessionPlanTable, upgradeManagementSnapshot, type SyncTable, type SyncSnapshot } from '../lib/replication.ts';
++
++test('el esquema compatible elimina plazos y una copia antigua se amplía sin inventar compras', t => {
++  const db = new SqliteDatabase(':memory:'); t.after(() => db.close());
++  const table: SyncTable = { name: 'pos_plans', sql: String(db.raw.prepare("SELECT sql FROM sqlite_master WHERE name='pos_plans'").get()!.sql),
++    columns: db.raw.prepare('PRAGMA table_info(pos_plans)').all().map((c: any) => ({ name: c.name, type: c.type, pk: c.pk })), rows: [] };
++  const legacy = legacySessionPlanTable(table);
++  assert.ok(!legacy.sql!.includes('session_period'));
++  const check = new DatabaseSync(':memory:'); t.after(() => check.close()); check.exec(legacy.sql!);
++  assert.ok(!check.prepare('PRAGMA table_info(pos_plans)').all().some(c => c.name === 'session_period'));
++  const upgraded = upgradeManagementSnapshot({ tables: [legacy], triggers: [] } as unknown as SyncSnapshot);
++  assert.equal(upgraded.tables[0].columns.length, table.columns.length);
++  assert.deepEqual(upgradeManagementSnapshot(upgraded), upgraded);
++});
+--- /dev/null
++++ b/tests/session-plans-ui.test.ts
+@@ -0,0 +1,24 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { componentHarness, componentStubs, findElement, elementText } from './component-harness.ts';
++
++test('crear un plan por sesiones pide cantidad y plazo por separado y los envía al guardar', async t => {
++  const h = componentHarness(); t.after(() => h.cleanup());
++  let saved: any;
++  const { CatalogEditor } = h.load('../src/Pos.tsx', {
++    'react-dom': { createPortal: (value: unknown) => value }, 'lucide-react': componentStubs,
++    './api': { api: async (_path: string, _method: string, body: any) => { saved = body; return { id: 'plan' }; } },
++    './usePeople': {}, './browser': {}, './PersonMemberships': { default: 'PersonMemberships' }, './PosReports': { default: 'PosReports' },
++    './ShareCredentialButton': { default: 'ShareCredentialButton' }, './ui': componentStubs, './styles/pos.css': {},
++  });
++  let tree = h.render(() => CatalogEditor({ kind: 'plan', onClose() {}, onSaved: async () => {} }));
++  findElement(tree, e => e.type === 'select' && e.props.name === 'unit').props.onChange({ target: { value: 'sessions' } });
++  tree = await h.settle();
++  assert.match(findElement(tree, e => e.props.label === 'Plazo para completar las sesiones').props.hint, /15 sesiones para completar en 1 mes/);
++  assert.ok(findElement(tree, e => e.props.label === 'Cantidad de sesiones'));
++  assert.equal(findElement(tree, e => e.type === 'input' && e.props.name === 'session_period').props.required, true);
++  const form = new FormData();
++  for (const [name, value] of Object.entries({ name: '15 sesiones', unit: 'sessions', duration: '15', session_period_unit: 'months', session_period: '1', price: '150', active: '1' })) form.set(name, value);
++  await findElement(tree, e => e.type === 'Form').props.onSubmit(form);
++  assert.equal(saved.duration, 15); assert.equal(saved.session_period, 1); assert.equal(saved.session_period_unit, 'months');
++});
+--- /dev/null
++++ b/tests/sync-backup-resources.test.ts
+@@ -0,0 +1,225 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { createHash } from 'node:crypto';
++import { createWriteStream, ftruncateSync, mkdirSync, mkdtempSync, openSync, closeSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join, relative, sep } from 'node:path';
++import { Readable } from 'node:stream';
++import { pipeline } from 'node:stream/promises';
++import { setTimeout } from 'node:timers/promises';
++import { get, type IncomingMessage } from 'node:http';
++import { startPlatform } from '../server/platform.ts';
++import { TenantManager } from '../server/tenant-manager.ts';
++import { PlatformStore } from '../server/platform-store.ts';
++import { replicaSnapshot, authorizeReplica, pairReplica } from '../server/replication.ts';
++import { streamBackupCopy } from '../server/backup-transfer.ts';
++import { backupJob } from '../server/backup-jobs.ts';
++import { maxBackupTransferBytes } from '../lib/backup-limits.ts';
++
++function temporary(_t: any) {
++  return mkdtempSync(join(tmpdir(), 'gympass-resources-'));
++}
++function cleanup(root: string) {
++  const child = relative(tmpdir(), root);
++  assert.ok(child.startsWith('gympass-resources-') && !child.includes(sep));
++  rmSync(root, { recursive: true, force: true });
++}
++
++async function fixture(t: any) {
++  const root = temporary(t);
++  const app = await startPlatform({ dataDirectory: root, port: 0, allowHttp: true });
++  t.after(async () => { await app.close(); cleanup(root); });
++  const owner = await app.store.bootstrap({ name: 'Owner', email: 'owner@example.test', password: 'Prueba123456' });
++  const gym = app.store.createGym(owner, { name: 'Recursos', slug: 'recursos' });
++  app.tenants.provision(gym); app.store.markGymProvisioned(gym.id);
++  await app.store.createMember(owner, gym.id, { name: 'Admin', email: 'admin@example.test', password: 'Prueba123456', role: 'admin' });
++  const login = await app.store.login({ email: 'admin@example.test', password: 'Prueba123456' });
++  const auth = app.store.authorizeSync(login.token, gym.id);
++  const pair = await app.tenants.withTenant(gym, async ctx => pairReplica(ctx, auth, { name: 'Windows', kind: 'desktop' }, app.store.linkedCredentialRevision(auth.user.id)));
++  const request = (revision?: string, costs = true) => fetch(app.url + `/api/gyms/${gym.id}/sync/snapshot` + (revision ? '?revision=' + revision : ''), {
++    headers: { Authorization: 'Bearer ' + pair.token, 'X-GymPASS-Session-Plans': '1', ...(costs ? { 'X-GymPASS-Product-Costs': '1' } : {}) },
++  });
++  return { root, app, gym, pair, request };
++}
++
++test('la renovación no consulta el historial y funciona aunque otra transferencia ocupe el cupo', async t => {
++  const f = await fixture(t);
++  const first = await (await f.request()).json();
++  let release!: () => void;
++  const held = f.app.tenants.withHeavyOperation(() => new Promise<void>(done => { release = done; }));
++  let restore!: () => void;
++  await f.app.tenants.withTenant(f.gym, async ctx => {
++    const prepare = ctx.db.raw.prepare;
++    ctx.db.raw.prepare = function(this: typeof ctx.db.raw, sql: string) {
++      assert.doesNotMatch(sql, /SELECT\s+\*\s+FROM\s+"?(events|people|pos_sales)\b/i, 'La revisión no debe materializar datos de negocio.');
++      return prepare.call(this, sql);
++    } as typeof prepare;
++    restore = () => { ctx.db.raw.prepare = prepare; };
++  });
++  try {
++    const response = await f.request(first.revision);
++    assert.equal(response.status, 200);
++    const same = await response.json();
++    assert.equal(same.unchanged, true);
++    assert.equal(same.issued_at, first.issued_at);
++    assert.equal(same.expires_at, first.expires_at);
++    assert.equal(same.tables, undefined);
++    const rejected = await f.request();
++    assert.equal(rejected.status, 429);
++    assert.equal(rejected.headers.get('retry-after'), '5');
++    assert.equal((await fetch(f.app.url + '/api/health')).status, 200);
++  } finally { restore(); release(); await held; }
++  const recovered = await f.request();
++  assert.equal(recovered.status, 200); await recovered.arrayBuffer();
++});
++
++test('el stream conserva las tablas, las fotos, el formato anterior y las renovaciones revocables', async t => {
++  const f = await fixture(t);
++  const photo = crypto.randomUUID() + '.webp';
++  const bytes = Buffer.alloc(48 * 1024 + 2, 97);
++  await f.app.tenants.withTenant(f.gym, async ctx => {
++    mkdirSync(join(ctx.root, 'photos'));
++    writeFileSync(join(ctx.root, 'photos', photo), bytes);
++  });
++  for (const costs of [true, false]) {
++    const expected = await f.app.tenants.withTenant(f.gym, async ctx => {
++      const { device, auth } = authorizeReplica(f.app.store, ctx, f.pair.token);
++      return replicaSnapshot(ctx, device, auth, costs);
++    });
++    const response = await f.request(undefined, costs);
++    assert.equal(response.status, 200);
++    const actual = await response.json();
++    assert.deepEqual(actual, JSON.parse(JSON.stringify(expected)));
++    assert.deepEqual(Buffer.from(actual.assets!['photos/' + photo], 'base64'), bytes);
++    const previous = actual.revision;
++    await f.app.tenants.withTenant(f.gym, async ctx => {
++      ctx.db.raw.prepare('UPDATE settings SET name=? WHERE id=1').run('Otro ' + costs);
++    });
++    const changed = await (await f.request(previous, costs)).json();
++    assert.ok(changed.tables); assert.notEqual(changed.revision, previous);
++  }
++  const current = await (await f.request()).json();
++  writeFileSync(join(f.root, 'tenants', f.gym.id, 'photos', photo), Buffer.alloc(bytes.length, 98));
++  utimesSync(join(f.root, 'tenants', f.gym.id, 'photos', photo), new Date(), new Date(Date.now() + 60000));
++  const photoChanged = await (await f.request(current.revision)).json();
++  assert.notEqual(photoChanged.revision, current.revision);
++  f.app.store.raw.prepare('UPDATE gym_memberships SET active=0 WHERE gym_id=?').run(f.gym.id);
++  const denied = await f.request(photoChanged.revision);
++  assert.equal(denied.status, 403);
++});
++
++test('los respaldos mayores de 256 MiB se exportan por partes y se importan con verificación de identidad', async t => {
++  const root = temporary(t), manager = new TenantManager(root);
++  t.after(async () => { await manager.close(); cleanup(root); });
++  const gym = { id: crypto.randomUUID(), name: 'Grande' };
++  manager.provision(gym);
++  await manager.withTenant(gym, async ctx => {
++    mkdirSync(join(ctx.root, 'photos'));
++    const photo = join(ctx.root, 'photos', crypto.randomUUID() + '.webp');
++    const fd = openSync(photo, 'wx');
++    try { ftruncateSync(fd, 260 * 1024 * 1024); } finally { closeSync(fd); }
++    let ticks = 0;
++    const clock = setInterval(() => { ticks++; }, 1);
++    try {
++      const copy = await ctx.backups.createAsync();
++      const schema = Number(ctx.db.raw.prepare('SELECT MAX(version) n FROM schema_version').get()!.n);
++      await ctx.backups.inspectAsync(copy.id, gym.id);
++      const stream = streamBackupCopy(ctx.backups.directory, copy.id, schema);
++      assert.ok(stream.size > 256 * 1024 * 1024 && stream.size < maxBackupTransferBytes);
++      const archive = join(root, 'large.gympassbackup');
++      let largest = 0, total = 0;
++      const measured = async function* () {
++        for await (const chunk of stream.chunks) { largest = Math.max(largest, chunk.length); total += chunk.length; yield chunk; }
++      };
++      await pipeline(Readable.from(measured(), { objectMode: false }), createWriteStream(archive));
++      assert.equal(total, stream.size);
++      assert.ok(largest <= 64 * 1024, 'El archivo grande no debe convertirse en un solo buffer.');
++      const imported = await backupJob<{ id: string }>('import', { directory: join(root, 'imported'), file: archive, maxSchema: schema, owner: gym.id });
++      assert.equal(imported.id, copy.id);
++      await assert.rejects(backupJob('inspect', { directory: join(root, 'imported'), id: copy.id, maxSchema: schema, owner: crypto.randomUUID() }), /otro gimnasio/);
++      assert.ok(ticks > 0, 'La creación y verificación deben ceder el hilo principal.');
++    } finally { clearInterval(clock); }
++  });
++});
++
++test('una descarga detenida conserva su instantánea y permite escribir en el mismo gimnasio', async t => {
++  const f = await fixture(t);
++  await f.app.tenants.withTenant(f.gym, async ctx => {
++    const insert = ctx.db.raw.prepare("INSERT INTO people(id,name,document,kind,status,created_at,notes) VALUES(?,?,?,'employee','active',?,?)");
++    ctx.db.raw.exec('BEGIN');
++    for (let i = 0; i < 20000; i++) insert.run('p' + i, 'Persona ' + i, 'D' + i, Date.now(), 'x'.repeat(512));
++    ctx.db.raw.exec('COMMIT');
++  });
++  let incoming!: IncomingMessage;
++  const ready = new Promise<void>((resolve, reject) => {
++    const call = get(f.app.url + `/api/gyms/${f.gym.id}/sync/snapshot`, {
++      headers: { Authorization: 'Bearer ' + f.pair.token, 'Accept-Encoding': 'identity', 'X-GymPASS-Product-Costs': '1', 'X-GymPASS-Session-Plans': '1' },
++    }, response => { incoming = response; incoming.pause(); resolve(); });
++    call.on('error', reject);
++  });
++  await ready;
++  assert.equal(incoming.statusCode, 200);
++  const write = f.app.tenants.withTenant(f.gym, async ctx => { ctx.db.raw.prepare("UPDATE settings SET name='Durante descarga' WHERE id=1").run(); });
++  const writable = await Promise.race([write.then(() => true), setTimeout(2000, false)]);
++  const chunks: Buffer[] = [];
++  const finished = new Promise<void>((resolve, reject) => {
++    incoming.on('data', chunk => chunks.push(chunk)); incoming.once('end', resolve); incoming.once('error', reject);
++  });
++  incoming.resume();
++  await finished; await write;
++  assert.equal(writable, true, 'Una descarga lenta no debe retener la cola de recepción.');
++  const snapshot = JSON.parse(Buffer.concat(chunks).toString('utf8'));
++  assert.equal(snapshot.tables.find((table: any) => table.name === 'settings').rows[0].name, f.gym.name);
++  assert.equal(snapshot.tables.find((table: any) => table.name === 'people').rows.length, 20000);
++});
++
++test('el lector móvil limita eventos desde SQL y conserva las entradas vigentes fuera de los últimos diez mil', async t => {
++  const f = await fixture(t);
++  const mobile = await f.app.tenants.withTenant(f.gym, async ctx => {
++    const { auth } = authorizeReplica(f.app.store, ctx, f.pair.token);
++    const pair = pairReplica(ctx, auth, { name: 'Lector', kind: 'mobile' }, f.app.store.linkedCredentialRevision(auth.user.id));
++    const insert = ctx.db.raw.prepare("INSERT INTO events(request_key,payload_hash,person_name,zone_id,zone_name,direction,method,allowed,reason,actor,occurred_at,local_date) VALUES(?,?,'Persona','general','General',?,'qr',1,'OK','Prueba',?,'2026-11-13')");
++    ctx.db.raw.exec('BEGIN');
++    for (let i = 0; i < 10020; i++) insert.run('reader-' + i, 'a'.repeat(64), i === 0 ? 'entry' : 'exit', i === 0 ? Date.now() + 86400000 : Date.now() + i);
++    ctx.db.raw.exec('COMMIT');
++    return pair;
++  });
++  const expected = await f.app.tenants.withTenant(f.gym, async ctx => {
++    const { device, auth } = authorizeReplica(f.app.store, ctx, mobile.token);
++    return replicaSnapshot(ctx, device, auth, true);
++  });
++  const response = await fetch(f.app.url + `/api/gyms/${f.gym.id}/sync/snapshot`, {
++    headers: { Authorization: 'Bearer ' + mobile.token, 'X-GymPASS-Product-Costs': '1', 'X-GymPASS-Session-Plans': '1' },
++  });
++  assert.equal(response.status, 200);
++  const snapshot = await response.json();
++  const events = snapshot.tables.find((table: any) => table.name === 'events').rows;
++  assert.equal(events.length, 10001);
++  assert.ok(events.some((row: any) => row.request_key === 'reader-0'));
++  assert.deepEqual(events.map((row: any) => row.id).sort((a: number, b: number) => a - b), expected.tables.find(table => table.name === 'events')!.rows.map(row => row.id).sort((a, b) => Number(a) - Number(b)));
++  assert.equal(snapshot.assets, undefined);
++  assert.equal(snapshot.tables.find((table: any) => table.name === 'settings').rows[0].recovery_hash, '');
++});
++
++test('la plataforma reutiliza archivos inmutables sin enlazar los datos activos ni duplicar el programa diario', async t => {
++  const root = temporary(t), manager = new TenantManager(root), store = new PlatformStore(root);
++  t.after(async () => { await manager.close(); store.close(); cleanup(root); });
++  const gym = { id: crypto.randomUUID(), name: 'Copias' };
++  manager.provision(gym);
++  const photo = crypto.randomUUID() + '.webp';
++  const live = join(root, 'tenants', gym.id, 'photos', photo);
++  mkdirSync(join(root, 'tenants', gym.id, 'photos'));
++  writeFileSync(live, 'Foto original');
++  const first = await manager.snapshotPlatform(store.raw);
++  await setTimeout(2);
++  const second = await manager.snapshotPlatform(store.raw);
++  const path = (id: string) => join(root, 'platform-backups', id, 'tenants', gym.id, 'photos', photo);
++  assert.equal(statSync(path(first.id)).ino, statSync(path(second.id)).ino);
++  assert.notEqual(statSync(path(first.id)).ino, statSync(live).ino);
++  writeFileSync(live, 'Foto cambiada');
++  assert.equal(readFileSync(path(first.id), 'utf8'), 'Foto original');
++  await manager.maintain([gym]);
++  await manager.withTenant(gym, async ctx => assert.equal(ctx.backups.list().filter(copy => copy.kind === 'automatic').length, 0));
++  const manifest = JSON.parse(readFileSync(join(root, 'platform-backups', second.id, 'complete.json'), 'utf8'));
++  assert.equal(createHash('sha256').update(readFileSync(path(second.id))).digest('hex'), manifest.files['tenants/' + gym.id + '/photos/' + photo]);
++});
+--- a/tests/voice-appearance.test.ts
++++ b/tests/voice-appearance.test.ts
+@@ -3,67 +3,30 @@
+ import { defaultVoiceSettings, recordedAccessVoice, type VoiceSettings } from '../lib/access-feedback.ts';
+ import { componentHarness, elementText, findElement } from './component-harness.ts';
+ 
+-test('Avisos y sonidos prueba voces sin guardarlas y confirma ajustes de hasta 300 %', async (t) => {
+-  const h = componentHarness();
+-  t.after(() => h.cleanup());
+-  const preferences = { ...defaultVoiceSettings, sound: false, vibration: false, theme: 'light', density: 'comfortable' };
+-  const calls: Array<{ direction: string; name: string; voice: string; preview: boolean; rate: number }> = [];
+-  const { default: AccessSounds } = h.load('../src/AccessSounds.tsx', {
+-    './preferences': {
+-      usePreferences: () => preferences,
+-      updatePreferences: (change: Partial<VoiceSettings>) => { Object.assign(preferences, change); return true; },
+-    },
+-    './feedback': {
+-      subscribeAccessVoices: (listener: (voices: unknown[]) => void) => { listener([]); return () => {}; },
+-      prepareAudio() {},
+-      prepareAccessVoice() {},
+-      stopFeedback() {},
+-      accessFeedback: async (_allowed: boolean, sound: boolean, _vibration: boolean, direction: string, name: string, options: VoiceSettings, preview: boolean) => {
+-        assert.equal(sound, true);
+-        calls.push({ direction, name, voice: options.voiceURI, preview, rate: options.voiceRate });
+-        return 'gympass';
+-      },
+-    },
+-    './ui': { Field: 'Field' },
+-    './styles/appearance.css': {},
++test('Sonidos ofrece exactamente voz con nombre, grabaciones y beeps y guarda al confirmar', async t => {
++  const h = componentHarness(); t.after(() => h.cleanup());
++  const preferences = { ...defaultVoiceSettings, sound: true, vibration: false };
++  const calls: { allowed: boolean; voice: string; name: string }[] = [];
++  const { default: Sounds } = h.load('../src/AccessSounds.tsx', {
++    './preferences': { usePreferences: () => preferences, updatePreferences: (change: any) => { Object.assign(preferences, change); return true; } },
++    './feedback': { prepareAudio() {}, prepareAccessVoice() {}, stopFeedback() {}, accessFeedback: async (allowed: boolean, _sound: boolean, _vibration: boolean, _direction: string, name: string, options: any) => { calls.push({ allowed, voice: options.voiceURI, name }); return options.voiceURI === 'tone:beep' ? 'tone' : 'device'; } },
++    './ui': { Field: 'Field' }, './styles/appearance.css': {},
+   });
+-  h.render(AccessSounds);
+-  await h.settle();
+-  const picker = (tree: unknown) => findElement(tree, (element) => element.type === 'Field' && element.props.label === 'Voz de los avisos').props.children;
+-  const initial = picker(await h.settle());
+-  assert.notEqual(initial.props.disabled, true);
+-  for (const gender of ['femeninas', 'masculinas']) {
+-    const group = findElement(initial, (element) => element.type === 'optgroup' && element.props.label.includes(gender));
+-    assert.equal(group.props.children.length, 5);
+-    assert.ok(group.props.children.every((option: { props: { disabled?: boolean } }) => !option.props.disabled));
+-  }
+-  initial.props.onChange({ target: { value: 'gympass:F3' } });
++  let tree = h.render(Sounds);
++  const picker = () => findElement(tree, e => e.type === 'Field' && e.props.label === 'Tipo de aviso').props.children;
++  assert.deepEqual(Array.from(picker().props.children, (e: any) => e.props.value), ['', recordedAccessVoice, 'tone:beep']);
++  assert.throws(() => findElement(tree, e => e.type === 'optgroup'));
++  findElement(tree, e => e.type === 'button' && elementText(e) === 'Probar acceso denegado').props.onClick();
++  tree = await h.settle();
++  assert.equal(calls[0].allowed, false);
++  assert.equal(calls[0].name, 'María Pérez');
++  picker().props.onChange({ target: { value: 'tone:beep' } }); tree = await h.settle();
+   assert.equal(preferences.voiceURI, '');
+-  let tree = h.render(AccessSounds);
+-  assert.equal(picker(tree).props.value, 'gympass:F3');
+-  findElement(tree, (element) => element.type === 'button' && elementText(element) === 'Probar entrada').props.onClick();
+-  tree = await h.settle();
+-  picker(tree).props.onChange({ target: { value: 'gympass:M4' } });
+-  tree = h.render(AccessSounds);
+-  assert.equal(picker(tree).props.value, 'gympass:M4');
+-  const rate = findElement(tree, (element) => element.type === 'input' && element.props.type === 'range');
+-  assert.equal(rate.props.max, 3);
+-  rate.props.onChange({ target: { valueAsNumber: 3 } });
+-  tree = await h.settle();
+-  findElement(tree, (element) => element.type === 'button' && elementText(element) === 'Probar salida').props.onClick();
+-  tree = await h.settle();
+-  assert.deepEqual(calls, [
+-    { direction: 'entry', name: 'María Pérez', voice: 'gympass:F3', preview: true, rate: 0.98 },
+-    { direction: 'exit', name: 'María Pérez', voice: 'gympass:M4', preview: true, rate: 3 },
+-  ]);
+-  assert.equal(preferences.voiceURI, '');
+-  assert.equal(preferences.voiceRate, 0.98);
+-  findElement(tree, (element) => element.type === 'button' && elementText(element) === 'Guardar cambios').props.onClick();
+-  tree = await h.settle();
+-  assert.equal(preferences.voiceURI, 'gympass:M4');
+-  assert.equal(preferences.voiceGender, 'male');
+-  assert.equal(preferences.voiceRate, 3);
+-  assert.match(elementText(tree), /Cambios guardados en este navegador/);
++  assert.throws(() => findElement(tree, e => e.type === 'input' && e.props.type === 'range'));
++  findElement(tree, e => e.type === 'button' && elementText(e) === 'Probar acceso permitido').props.onClick(); tree = await h.settle();
++  assert.equal(calls[1].voice, 'tone:beep');
++  findElement(tree, e => e.type === 'button' && elementText(e) === 'Guardar cambios').props.onClick(); tree = await h.settle();
++  assert.equal(preferences.voiceURI, 'tone:beep');
+ });
+ 
+ test('Avisos y sonidos permite probar las grabaciones y oculta ajustes que sólo afectan a las voces', async t => {
+@@ -84,7 +47,7 @@
+     './ui': { Field: 'Field' }, './styles/appearance.css': {},
+   });
+   let tree = h.render(AccessSounds);
+-  const picker = findElement(tree, e => e.type === 'Field' && e.props.label === 'Voz de los avisos').props.children;
++  const picker = findElement(tree, e => e.type === 'Field' && e.props.label === 'Tipo de aviso').props.children;
+   assert.equal(picker.props.value, recordedAccessVoice);
+   assert.throws(() => findElement(tree, e => e.type === 'input' && e.props.type === 'range'));
+   assert.throws(() => findElement(tree, e => e.type === 'Field' && e.props.label === 'Nombre para probar'));
+@@ -118,7 +81,7 @@
+   assert.equal(preferences.theme, 'light');
+   assert.equal(preferences.accent, '#636b2f');
+   assert.equal(button(tree, (e) => e.props['aria-label'] === 'Azul').props['aria-pressed'], true);
+-  assert.throws(() => findElement(tree, (e) => e.type === 'Field' && e.props.label === 'Voz de los avisos'));
++  assert.throws(() => findElement(tree, (e) => e.type === 'Field' && e.props.label === 'Tipo de aviso'));
+   button(tree, (e) => elementText(e) === 'Guardar cambios').props.onClick();
+   tree = await h.settle();
+   assert.equal(preferences.theme, 'dark');
+--- a/tests/voice-latency.test.ts
++++ b/tests/voice-latency.test.ts
+@@ -16,28 +16,14 @@
+   assert.equal(stopped, 2);
+ });
+ 
+-test('una voz de GymPASS lenta cede a la voz del teléfono en 250 ms y no suena después', async t => {
+-  t.mock.timers.enable({ apis: ['setTimeout'] });
+-  let ready!: () => void;
+-  const prepared = new Promise<void>(resolve => { ready = resolve; });
++test('una voz antigua se migra a la voz del teléfono sin cargar modelos ni esperar inferencia', async () => {
+   const messages: string[] = [];
+-  let played = 0;
+-  class Audio { state = 'running'; decodeAudioData = async () => ({}); createBuffer() { played++; throw Error('Audio tardío'); } }
+-  const h = componentHarness({ Worker: class {}, AudioContext: Audio, fetch: async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(0) }),
++  let workers = 0;
++  const h = componentHarness({ Worker: class { constructor() { workers++; } },
+     window: { __gympassNativeVoice: { speak: async (text: string) => { messages.push(text); return true; }, stop() {} } },
+   });
+-  const { accessFeedback } = h.load('../src/feedback.ts', { './voice-engine': {
+-    prepareGympassVoice: () => prepared,
+-    renderGympassVoice: async () => ({ samples: Float32Array.of(0), sampleRate: 44100 }),
+-  } });
+-  const pending = accessFeedback(true, true, false, 'entry', 'Ana', { voiceURI: 'gympass:F1', voiceGender: 'female', voiceRate: 1 });
+-  await h.settle();
+-  assert.deepEqual(messages, []);
+-  t.mock.timers.tick(250);
+-  await h.settle();
+-  assert.equal(await pending, 'device');
++  const { accessFeedback } = h.load('../src/feedback.ts');
++  assert.equal(await accessFeedback(true, true, false, 'entry', 'Ana', { voiceURI: 'gympass:F1', voiceGender: 'female', voiceRate: 1 }), 'device');
+   assert.deepEqual(messages, ['Entrando, Ana.']);
+-  ready();
+-  await h.settle();
+-  assert.equal(played, 0);
++  assert.equal(workers, 0);
+ });

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { accentProperties, accentTokens, defaultAccent, normalizeAccent } from '../lib/accent';
-import { defaultVoiceSettings, normalizeVoiceSettings, recordedAccessVoice, type VoiceSettings } from '../lib/access-feedback';
+import { accessVoiceMode, defaultVoiceSettings, normalizeVoiceSettings, recordedAccessVoice, type VoiceSettings } from '../lib/access-feedback';
 import { gymAppearance, defaultGymAppearance, type GymAppearance } from '../lib/gym-appearance';
 import type { Settings } from '../lib/domain';
 
@@ -15,7 +15,7 @@ export type Preferences = VoiceSettings & {
   vibration: boolean;
 };
 const key = 'gympass.preferences';
-const preferencesVersion = 4;
+const preferencesVersion = 5;
 let user = '';
 const listeners = new Set<() => void>();
 function load(): Preferences {
@@ -36,8 +36,8 @@ function load(): Preferences {
       vibration: saved.vibration === true,
       ...normalizeVoiceSettings({
         ...saved,
-        voiceURI: typeof saved.voiceURI === 'string' && (saved.version === preferencesVersion || saved.voiceURI !== '')
-          ? saved.voiceURI : recordedAccessVoice,
+        voiceURI: typeof saved.voiceURI === 'string' ? accessVoiceMode(saved.voiceURI) : recordedAccessVoice,
+        voiceGender: 'auto',
       }),
     };
   } catch {
@@ -101,6 +101,8 @@ export function updatePreferences(change: Partial<Preferences>) {
     ...preferences,
     ...change,
     ...normalizeVoiceSettings({ ...preferences, ...change }),
+    voiceURI: accessVoiceMode(change.voiceURI ?? preferences.voiceURI),
+    voiceGender: 'auto',
     accent: normalizeAccent(change.accent ?? preferences.accent),
   };
   let stored = true;

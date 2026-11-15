@@ -186,6 +186,46 @@ test('un cliente anterior recibe su esquema y sus ediciones no borran los costos
   } finally { await f.app.close(); }
 });
 
+test('los clientes anteriores conservan el plazo de sesiones de la nube al editar un plan', async t => {
+  const f = await fixture(t);
+  try {
+    const plan = await f.cloud(s => new PosService(s).savePlan({ name: '15 sesiones', unit: 'sessions', duration: 15, price_cents: 15000, session_period_unit: 'months', session_period: 2 }));
+    const pair = await f.request(`gyms/${f.gym.id}/sync/pair`, 'POST', { kind: 'desktop', name: 'Anterior sin plazos' });
+    const snapshot = (await f.request(`gyms/${f.gym.id}/sync/snapshot`, 'GET', undefined, pair.data.token, true)).data;
+    const table = snapshot.tables.find(table => table.name === 'pos_plans');
+    assert.ok(!table.columns.some(column => column.name === 'session_period'));
+    assert.ok(!table.sql.includes('session_period'));
+    const before = table.rows.find(row => row.id === plan.id);
+    await f.cloud(s => new PosService(s).savePlan({ ...plan, session_period: 3 }, plan.id));
+    const pushed = await f.request(`gyms/${f.gym.id}/sync/push`, 'POST', {
+      id: crypto.randomUUID(), gym_id: f.gym.id, installation_id: snapshot.installation_id,
+      base_revision: snapshot.revision, issued_at: snapshot.issued_at, expires_at: snapshot.expires_at,
+      changes: [{ table: 'pos_plans', before, after: { ...before, name: '15 sesiones renombradas' } }],
+    }, pair.data.token, true);
+    assert.equal(pushed.response.status, 200);
+    assert.equal(pushed.data.status, 'applied');
+    const saved = await f.cloud(s => s.one('SELECT name,session_period FROM pos_plans WHERE id=?', plan.id));
+    assert.equal(saved.name, '15 sesiones renombradas'); assert.equal(saved.session_period, 3);
+  } finally { await f.app.close(); }
+});
+
+test('un plan con plazo de dos meses se cobra sin conexión y sincroniza su vencimiento calculado', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-14T16:00:00Z') });
+  const f = await fixture(t); let copy;
+  try {
+    const seeded = await f.cloud(async s => ({ person: await s.savePerson(person('PLAZO-OFFLINE')),
+      plan: await new PosService(s).savePlan({ name: '15 sesiones en dos meses', unit: 'sessions', duration: 15, price_cents: 15000, session_period_unit: 'months', session_period: 2 }) }));
+    copy = await f.local('Plazos configurados');
+    const pos = new PosService(copy.service());
+    assert.equal((await pos.catalog()).plans[0].session_period, 2);
+    const paid = await pos.checkout(sale(seeded.person.id, seeded.plan));
+    assert.equal(paid.memberships[0].end_date, '2027-01-14');
+    await copy.replica.synchronize();
+    assert.equal(copy.replica.status().conflict, null);
+    await f.cloud(async s => assert.equal((await new PosService(s).sale(paid.id)).memberships[0].end_date, '2027-01-14'));
+  } finally { if (copy) { await copy.replica.stop(); copy.db.close(); } await f.app.close(); }
+});
+
 test('una venta sin conexión conserva su costo al sincronizar aunque el catálogo central cambie', async t => {
   const f = await fixture(t);
   let copy;

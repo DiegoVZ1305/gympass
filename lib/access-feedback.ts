@@ -16,6 +16,10 @@ export type VoiceSettings = { voiceURI: string; voiceGender: VoiceGender; voiceR
 export const voiceRateLimits = { min: 0.5, max: 3, step: 0.01 } as const;
 export const defaultVoiceSettings: VoiceSettings = { voiceURI: '', voiceGender: 'auto', voiceRate: 0.98 };
 export const recordedAccessVoice = 'recorded:access';
+export const beepAccessVoice = 'tone:beep';
+export function accessVoiceMode(value: unknown) {
+  return value === recordedAccessVoice ? recordedAccessVoice : value === beepAccessVoice ? beepAccessVoice : '';
+}
 export function recordedAccessSound(allowed: boolean) {
   return allowed ? 'allowed-recorded' : 'denied-recorded';
 }

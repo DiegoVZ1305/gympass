@@ -3,6 +3,7 @@ import { ApiError, hash, personalQrIdSql, personSchema, type Service } from './s
 import { localParts, nextDate } from './domain.ts';
 import {
   planEndDate,
+  defaultSessionUntil,
   type PosCatalog,
   type PosProduct,
   type PosPlan,
@@ -63,6 +64,8 @@ const planSchema = z.object({
   price_cents: cents,
   unit: z.enum(['days', 'months', 'sessions']),
   duration: z.number().int().positive().max(3660),
+  session_period_unit: z.enum(['days', 'months']).optional(),
+  session_period: z.number().int().positive().max(3660).optional(),
   active: flag.default(1),
 });
 const checkoutSchema = z.object({
@@ -85,7 +88,8 @@ const checkoutSchema = z.object({
         id: text,
         quantity: z.number().int().positive().max(1000),
         expected_plan: z
-          .object({ unit: z.enum(['days', 'months', 'sessions']), duration: z.number().int().positive().max(3660) })
+          .object({ unit: z.enum(['days', 'months', 'sessions']), duration: z.number().int().positive().max(3660),
+            session_period_unit: z.enum(['days', 'months']).optional(), session_period: z.number().int().positive().max(3660).optional() })
           .optional(),
       }),
     )
@@ -218,25 +222,33 @@ export class PosService {
       key = id || crypto.randomUUID();
     if (p.unit === 'months' && p.duration > 120) throw new ApiError(400, 'La duración máxima es de 120 meses.');
     if (id) await this.service.exists('pos_plans', id);
+    const previous = id ? await this.service.one('SELECT session_period_unit,session_period FROM pos_plans WHERE id=?', id) : null;
+    const periodUnit = p.session_period_unit ?? previous?.session_period_unit ?? 'months';
+    const period = p.session_period ?? previous?.session_period ?? 1;
+    if (periodUnit === 'months' && period > 120) throw new ApiError(400, 'El plazo máximo es de 120 meses.');
     await this.atomic([
       id
         ? this.service.stmt(
-            'UPDATE pos_plans SET name=?,unit=?,duration=?,price_cents=?,active=? WHERE id=?',
+            'UPDATE pos_plans SET name=?,unit=?,duration=?,price_cents=?,active=?,session_period_unit=?,session_period=? WHERE id=?',
             p.name,
             p.unit,
             p.duration,
             p.price_cents,
             p.active,
+            periodUnit,
+            period,
             key,
           )
         : this.service.stmt(
-            'INSERT INTO pos_plans(id,name,unit,duration,price_cents,active) VALUES(?,?,?,?,?,?)',
+            'INSERT INTO pos_plans(id,name,unit,duration,price_cents,active,session_period_unit,session_period) VALUES(?,?,?,?,?,?,?,?)',
             key,
             p.name,
             p.unit,
             p.duration,
             p.price_cents,
             p.active,
+            periodUnit,
+            period,
           ),
       this.service.audit(id ? 'pos.plan.updated' : 'pos.plan.created', key),
     ]);
@@ -305,12 +317,14 @@ export class PosService {
           line.id,
         );
         if (!item || !item.active) throw new ApiError(409, 'El producto o plan ya no está disponible.');
-        if (line.kind === 'plan' && item.unit === 'sessions' && (!p.sessions_until || p.sessions_until < start))
+        if (line.kind === 'plan' && item.unit === 'sessions' && p.sessions_until && p.sessions_until < start)
           throw new ApiError(400, 'Indica la fecha límite para completar las sesiones, igual o posterior al inicio del plan.');
         if (
           line.kind === 'plan' &&
           line.expected_plan &&
-          (item.unit !== line.expected_plan.unit || item.duration !== line.expected_plan.duration)
+          (item.unit !== line.expected_plan.unit || item.duration !== line.expected_plan.duration ||
+            line.expected_plan.session_period_unit !== undefined && item.session_period_unit !== line.expected_plan.session_period_unit ||
+            line.expected_plan.session_period !== undefined && item.session_period !== line.expected_plan.session_period)
         )
           throw new ApiError(409, 'El plan cambió. Actualiza el catálogo y revisa la vigencia antes de confirmar.');
         return { ...line, item, lineId: crypto.randomUUID() };
@@ -392,7 +406,7 @@ export class PosService {
               item.duration,
               item.price_cents,
               start,
-              item.unit === 'sessions' ? nextDate(p.sessions_until!, 1) : planEndDate(start, item.unit, item.duration),
+              item.unit === 'sessions' ? nextDate(p.sessions_until || defaultSessionUntil(start, item), 1) : planEndDate(start, item.unit, item.duration),
               item.unit === 'sessions' ? item.duration : null,
               item.unit === 'sessions' ? item.duration : null,
               now,

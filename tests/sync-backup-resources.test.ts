@@ -37,7 +37,7 @@ async function fixture(t: any) {
   const auth = app.store.authorizeSync(login.token, gym.id);
   const pair = await app.tenants.withTenant(gym, async ctx => pairReplica(ctx, auth, { name: 'Windows', kind: 'desktop' }, app.store.linkedCredentialRevision(auth.user.id)));
   const request = (revision?: string, costs = true) => fetch(app.url + `/api/gyms/${gym.id}/sync/snapshot` + (revision ? '?revision=' + revision : ''), {
-    headers: { Authorization: 'Bearer ' + pair.token, ...(costs ? { 'X-GymPASS-Product-Costs': '1' } : {}) },
+    headers: { Authorization: 'Bearer ' + pair.token, 'X-GymPASS-Session-Plans': '1', ...(costs ? { 'X-GymPASS-Product-Costs': '1' } : {}) },
   });
   return { root, app, gym, pair, request };
 }
@@ -153,7 +153,7 @@ test('una descarga detenida conserva su instantánea y permite escribir en el mi
   let incoming!: IncomingMessage;
   const ready = new Promise<void>((resolve, reject) => {
     const call = get(f.app.url + `/api/gyms/${f.gym.id}/sync/snapshot`, {
-      headers: { Authorization: 'Bearer ' + f.pair.token, 'Accept-Encoding': 'identity', 'X-GymPASS-Product-Costs': '1' },
+      headers: { Authorization: 'Bearer ' + f.pair.token, 'Accept-Encoding': 'identity', 'X-GymPASS-Product-Costs': '1', 'X-GymPASS-Session-Plans': '1' },
     }, response => { incoming = response; incoming.pause(); resolve(); });
     call.on('error', reject);
   });
@@ -189,7 +189,7 @@ test('el lector móvil limita eventos desde SQL y conserva las entradas vigentes
     return replicaSnapshot(ctx, device, auth, true);
   });
   const response = await fetch(f.app.url + `/api/gyms/${f.gym.id}/sync/snapshot`, {
-    headers: { Authorization: 'Bearer ' + mobile.token, 'X-GymPASS-Product-Costs': '1' },
+    headers: { Authorization: 'Bearer ' + mobile.token, 'X-GymPASS-Product-Costs': '1', 'X-GymPASS-Session-Plans': '1' },
   });
   assert.equal(response.status, 200);
   const snapshot = await response.json();

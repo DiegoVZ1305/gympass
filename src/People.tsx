@@ -29,7 +29,7 @@ import {
   type PersonSummary,
   type Credential,
 } from '../lib/domain';
-import { planEndDate, defaultSessionUntil, type PosCatalog, type PosPlan, type PosCheckout, type PosSaleDetail } from '../lib/pos-types';
+import { planEndDate, defaultSessionUntil, planDurationLabel, type PosCatalog, type PosPlan, type PosCheckout, type PosSaleDetail } from '../lib/pos-types';
 import { usePeople } from './usePeople';
 import { qrSvg } from '../lib/qr';
 import type { CardData } from '../lib/card';
@@ -67,7 +67,7 @@ export function PersonForm({
   const selectedPlan = !person && planHolder(kind) ? plans?.find((plan) => plan.id === planId) : undefined;
   const today = person ? data.today : localParts(new Date(), data.settings.timezone).date;
   const end = selectedPlan ? planEndDate(today, selectedPlan.unit, selectedPlan.duration) : null;
-  const deadline = selectedPlan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(today) : '';
+  const deadline = selectedPlan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(today, selectedPlan) : '';
   async function loadPlans(signal?: AbortSignal) {
     try {
       const catalog = await api<PosCatalog>('pos/catalog', 'GET', undefined, signal);
@@ -128,7 +128,8 @@ export function PersonForm({
                     kind: 'plan',
                     id: selectedPlan!.id,
                     quantity: 1,
-                    expected_plan: { unit: selectedPlan!.unit, duration: selectedPlan!.duration },
+                    expected_plan: { unit: selectedPlan!.unit, duration: selectedPlan!.duration,
+                      session_period_unit: selectedPlan!.session_period_unit || 'months', session_period: selectedPlan!.session_period || 1 },
                   },
                 ],
               };
@@ -225,13 +226,12 @@ export function PersonForm({
                   name="plan_id"
                   value={planId}
                   disabled={!plans}
-                  onChange={(event) => setPlanId(event.target.value)}
+                  onChange={(event) => { setPlanId(event.target.value); setSessionsUntil(null); }}
                 >
                   <option value="">{plans ? 'Sin plan por ahora' : 'Cargando planes…'}</option>
                   {plans?.map((plan) => (
                     <option key={plan.id} value={plan.id}>
-                      {plan.name} · {plan.duration}{' '}
-                      {plan.unit === 'days' ? 'día(s)' : plan.unit === 'months' ? 'mes(es)' : 'sesión(es)'} ·{' '}
+                      {plan.name} · {planDurationLabel(plan)} ·{' '}
                       {new Intl.NumberFormat('es-BO', { style: 'currency', currency: 'BOB' }).format(
                         plan.price_cents / 100,
                       )}

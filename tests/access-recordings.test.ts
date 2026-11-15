@@ -23,8 +23,8 @@ test('los dos audios proporcionados se distribuyen como WAV mono con el orden co
 
 for (const [saved, expected] of [
   [{}, recordedAccessVoice],
-  [{ version: 3, voiceURI: '', sound: true }, recordedAccessVoice],
-  [{ version: 3, voiceURI: 'gympass:F3', sound: false }, 'gympass:F3'],
+  [{ version: 3, voiceURI: '', sound: true }, ''],
+  [{ version: 3, voiceURI: 'gympass:F3', sound: false }, ''],
   [{ version: 4, voiceURI: '', sound: true }, ''],
 ] as const) {
   test(`la selección de audio respeta las preferencias guardadas: ${JSON.stringify(saved)}`, t => {
@@ -39,7 +39,7 @@ for (const [saved, expected] of [
     assert.equal(value.voiceURI, expected);
     assert.equal(value.sound, 'sound' in saved && saved.sound);
     preferences.updatePreferences({ voiceURI: recordedAccessVoice });
-    assert.equal(stored.version, 4);
+    assert.equal(stored.version, 5);
     assert.equal(stored.voiceURI, recordedAccessVoice);
   });
 }

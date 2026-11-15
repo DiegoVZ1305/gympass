@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import {
   planEndDate,
   defaultSessionUntil,
+  planDurationLabel,
   type MembershipSummary,
   type PlanGate,
   type PosCatalog,
@@ -221,7 +222,7 @@ export function AddPlan({ personId, today, onDone }: { personId: string; today: 
   }, [open, personId, today]);
   const plan = plans?.find((item) => item.id === planId);
   const end = plan && start ? planEndDate(start, plan.unit, plan.duration) : null;
-  const deadline = plan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(start || today) : '';
+  const deadline = plan?.unit === 'sessions' ? sessionsUntil ?? defaultSessionUntil(start || today, plan) : '';
   if (!open)
     return (
       <button className="btn secondary" onClick={() => setOpen(true)}>
@@ -256,7 +257,8 @@ export function AddPlan({ personId, today, onDone }: { personId: string; today: 
                 kind: 'plan',
                 id: plan.id,
                 quantity: 1,
-                expected_plan: { unit: plan.unit, duration: plan.duration },
+                expected_plan: { unit: plan.unit, duration: plan.duration,
+                  session_period_unit: plan.session_period_unit || 'months', session_period: plan.session_period || 1 },
               },
             ],
           };
@@ -268,12 +270,11 @@ export function AddPlan({ personId, today, onDone }: { personId: string; today: 
       >
         <div className="form-grid">
           <Field label="Plan" hint="Los planes se administran en Caja y planes > Planes.">
-            <select value={planId} disabled={!plans} onChange={(event) => setPlanId(event.target.value)}>
+            <select value={planId} disabled={!plans} onChange={(event) => { setPlanId(event.target.value); setSessionsUntil(null); }}>
               <option value="">{plans ? 'Elige un plan' : 'Cargando planes…'}</option>
               {plans?.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.name} · {item.duration}{' '}
-                  {item.unit === 'days' ? 'día(s)' : item.unit === 'months' ? 'mes(es)' : 'sesión(es)'} ·{' '}
+                  {item.name} · {planDurationLabel(item)} ·{' '}
                   {new Intl.NumberFormat('es-BO', { style: 'currency', currency: 'BOB' }).format(
                     item.price_cents / 100,
                   )}

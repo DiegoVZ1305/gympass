@@ -1,8 +1,7 @@
 import {
   defaultVoiceSettings, feedbackAnnouncement, feedbackSound, normalizeVoiceSettings, preferredSpanishVoice,
-  recordedAccessSound, recordedAccessVoice, voiceGender, voiceIdentity, type VoiceSettings,
+  beepAccessVoice, recordedAccessSound, recordedAccessVoice, voiceGender, voiceIdentity, type VoiceSettings,
 } from '../lib/access-feedback';
-import { findGympassVoice, type GympassVoice } from '../lib/voice-catalog';
 let context: AudioContext | undefined;
 const buffers = new Map<string, Promise<AudioBuffer>>();
 let playing: AudioBufferSourceNode | undefined;
@@ -11,31 +10,6 @@ let activeSpeech: { utterance: SpeechSynthesisUtterance; stop: () => void } | un
 declare global {
   interface Window {
     __gympassNativeVoice?: { speak(text: string, rate: number): Promise<boolean>; stop(): void };
-  }
-}
-
-function deadline<T>(work: Promise<T>, milliseconds: number): Promise<T | undefined> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(undefined), milliseconds);
-    void work.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
-  });
-}
-
-async function playGympassVoice(voice: GympassVoice, text: string, rate: number, current: number, preview: boolean) {
-  try {
-    if (!context || typeof Worker === 'undefined') return false;
-    const engine = await import('./voice-engine');
-    // La generación sigue en segundo plano y queda en caché. El lector nunca
-    // espera la descarga de modelos ni varios segundos de inferencia.
-    const work = engine.prepareGympassVoice(voice.preset).then(() =>
-      current === sequence ? engine.renderGympassVoice(voice.preset, text, rate) : undefined);
-    const audio = preview ? await work : await deadline(work, 250);
-    if (!audio || current !== sequence || context.state !== 'running') return false;
-    const decoded = context.createBuffer(1, audio.samples.length, audio.sampleRate);
-    decoded.copyToChannel(audio.samples, 0);
-    return playBuffer(decoded);
-  } catch {
-    return false;
   }
 }
 
@@ -145,10 +119,8 @@ function buffer(name: string) {
   }
   return buffers.get(name)!;
 }
-export function prepareAccessVoice(voiceURI: string) {
-  const voice = findGympassVoice(voiceURI);
-  if (voice && typeof Worker !== 'undefined')
-    void import('./voice-engine').then((engine) => engine.prepareGympassVoice(voice.preset)).catch(() => {});
+export function prepareAccessVoice(_voiceURI: string) {
+  try { speechEngine()?.getVoices(); } catch {}
 }
 
 export function prepareAudio() {
@@ -203,15 +175,12 @@ export async function accessFeedback(
       } catch {
         // Keep the original confirmation tone if a recording cannot be loaded.
       }
-    } else {
-      const voice = findGympassVoice(options.voiceURI);
-      if (voice && await playGympassVoice(voice, feedbackAnnouncement(direction, personName, allowed), options.voiceRate, current, preview))
-        return 'gympass';
+    } else if (options.voiceURI !== beepAccessVoice) {
       if (current !== sequence) return 'none';
-      if (await announce(direction, personName, current, options, allowed)) return current === sequence ? 'device' : 'none';
+      if (await announce(direction, personName, current, { ...options, voiceURI: '', voiceGender: 'auto' }, allowed)) return current === sequence ? 'device' : 'none';
     }
     if (current !== sequence || !context) return 'none';
-    const decoded = await buffer(feedbackSound({ allowed: Number(allowed), direction }));
+    const decoded = await buffer(options.voiceURI === beepAccessVoice ? (allowed ? 'entry' : 'denied') : feedbackSound({ allowed: Number(allowed), direction }));
     if (current === sequence && playBuffer(decoded)) return 'tone';
   } catch {
     /* Audio failure must never interrupt access registration. */

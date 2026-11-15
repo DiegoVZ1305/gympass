@@ -5,6 +5,7 @@ import type { Bootstrap, PersonSummary } from '../lib/domain';
 import {
   planEndDate,
   defaultSessionUntil,
+  planDurationLabel,
   type PosCatalog,
   type PosCheckout,
   type PlanGate,
@@ -28,8 +29,7 @@ import './styles/pos.css';
 const money = (cents: number) =>
   new Intl.NumberFormat('es-BO', { style: 'currency', currency: 'BOB' }).format(cents / 100);
 const methods: Record<PaymentMethod, string> = { cash: 'Efectivo', transfer: 'Transferencia o QR', card: 'Tarjeta' };
-const duration = (plan: PosPlan) =>
-  `${plan.duration} ${plan.unit === 'days' ? 'día(s)' : plan.unit === 'months' ? 'mes(es)' : 'sesión(es)'}`;
+const duration = planDurationLabel;
 export function lastValidDate(exclusive: string) {
   const value = new Date(exclusive + 'T12:00:00Z');
   value.setUTCDate(value.getUTCDate() - 1);
@@ -106,7 +106,8 @@ export function Checkout({
   const hasPlan = cart.some((line) => line.kind === 'plan');
   const hasSessions = cart.some((line) => line.kind === 'plan' && catalog.plans.find((plan) => plan.id === line.id)?.unit === 'sessions');
   const sessionStart = newMember ? data.today : start;
-  const deadline = hasSessions ? sessionsUntil ?? defaultSessionUntil(sessionStart || data.today) : '';
+  const sessionPlan = catalog.plans.find(plan => plan.unit === 'sessions' && cart.some(line => line.kind === 'plan' && line.id === plan.id));
+  const deadline = hasSessions ? sessionsUntil ?? defaultSessionUntil(sessionStart || data.today, sessionPlan) : '';
   useEffect(() => {
     if (hasPlan) return;
     setNewMember(undefined);
@@ -156,6 +157,7 @@ export function Checkout({
   }, [personQuery, people.rows, people.busy, people.error, locked, newMember]);
   function change(kind: CartLine['kind'], id: string, delta: number) {
     if (locked) return;
+    if (kind === 'plan') setSessionsUntil(null);
     setCart((current) => {
       // Un socio solo puede tener un plan: elegir otro lo reemplaza en el cobro, siempre de a uno.
       if (kind === 'plan' && delta > 0)
@@ -275,6 +277,8 @@ export function Checkout({
                         expected_plan: {
                           unit: (itemFor(line) as PosPlan).unit,
                           duration: (itemFor(line) as PosPlan).duration,
+                          session_period_unit: (itemFor(line) as PosPlan).session_period_unit || 'months',
+                          session_period: (itemFor(line) as PosPlan).session_period || 1,
                         },
                       }
                     : {}),
@@ -310,6 +314,7 @@ export function Checkout({
               clearPending();
               setUncertain(false);
               setCart([]);
+              setSessionsUntil(null);
               setNewMember(undefined);
               setPerson(null);
               setPersonQuery('');
@@ -672,6 +677,7 @@ export function CatalogEditor({
   const savedId = useRef(item?.id);
   const product = kind === 'product' ? (item as PosProduct | undefined) : undefined;
   const plan = kind === 'plan' ? (item as PosPlan | undefined) : undefined;
+  const [planUnit, setPlanUnit] = useState(plan?.unit || 'months');
   const [cost, setCost] = useState(product?.cost_cents == null ? '' : (product.cost_cents / 100).toFixed(2));
   const [salePrice, setSalePrice] = useState(((item?.price_cents || 0) / 100).toFixed(2));
   const amount = (value: string) => /^\d+(?:[.,]\d{1,2})?$/.test(value.trim())
@@ -703,7 +709,8 @@ export function CatalogEditor({
                     track_stock: form.get('track_stock') === '1' ? 1 : 0,
                     ...(!item ? { stock: Number(form.get('stock') || 0) } : {}),
                   }
-                : { unit: form.get('unit'), duration: Number(form.get('duration')) }),
+                : { unit: form.get('unit'), duration: Number(form.get('duration')),
+                    ...(planUnit === 'sessions' ? { session_period_unit: form.get('session_period_unit'), session_period: Number(form.get('session_period')) } : {}) }),
             },
           );
           savedId.current = result.id;
@@ -761,13 +768,13 @@ export function CatalogEditor({
         ) : (
           <div className="form-grid">
             <Field label="Modalidad">
-              <select name="unit" defaultValue={plan?.unit || 'months'}>
+              <select name="unit" value={planUnit} onChange={event => setPlanUnit(event.target.value as PosPlan['unit'])}>
                 <option value="days">Días</option>
                 <option value="months">Meses</option>
                 <option value="sessions">Sesiones</option>
               </select>
             </Field>
-            <Field label="Duración / cantidad" hint="Un año equivale a 12 meses.">
+            <Field label={planUnit === 'sessions' ? 'Cantidad de sesiones' : 'Duración / cantidad'} hint={planUnit === 'sessions' ? 'Total de entradas incluidas en el paquete.' : 'Un año equivale a 12 meses.'}>
               <input
                 name="duration"
                 type="number"
@@ -778,6 +785,17 @@ export function CatalogEditor({
                 defaultValue={plan?.duration || 1}
               />
             </Field>
+            {planUnit === 'sessions' && <>
+              <Field label="Plazo para completar las sesiones" hint="Por ejemplo: 15 sesiones para completar en 1 mes.">
+                <input type="number" name="session_period" required min="1" max="120" step="1" defaultValue={plan?.session_period || 1} />
+              </Field>
+              <Field label="Unidad del plazo">
+                <select name="session_period_unit" defaultValue={plan?.session_period_unit || 'months'}>
+                  <option value="months">Meses</option>
+                  <option value="days">Días</option>
+                </select>
+              </Field>
+            </>}
           </div>
         )}
         <Field label="Estado">
@@ -1201,7 +1219,7 @@ export default function Pos({
     await refreshCatalog().catch((reason) => notify('El cambio se guardó. ' + errorText(reason), true));
   };
   return (
-    <div className={'pos-page' + (tab === 'reports' ? ' pos-page-flow' : '')}>
+    <div className={'pos-page' + (tab === 'reports' || tab === 'checkout' ? ' pos-page-flow' : '')}>
       <div className="page-heading">
         <div>
           <h1>Caja y planes</h1>

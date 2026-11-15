@@ -1,5 +1,6 @@
 import { appearanceColumns } from './gym-appearance.ts';
 import { sessionDeadlineTriggers } from './session-deadlines.ts';
+import { sessionPlanColumns } from './session-plans.ts';
 import { productCostColumnSql, productCostTables } from './product-costs.ts';
 export { productCostColumnSql, productCostTables };
 export type SyncValue = string | number | null;
@@ -51,12 +52,28 @@ export function upgradeManagementSnapshot(snapshot: SyncSnapshot): SyncSnapshot 
     const name = /CREATE TRIGGER (pos_one_plan|pos_access_use)\b/i.exec(sql)?.[1] as keyof typeof sessionDeadlineTriggers | undefined;
     return name ? sessionDeadlineTriggers[name] : sql;
   }), tables: appearance.tables.map(table => {
+    if (table.name === 'pos_plans') {
+      const missing = sessionPlanColumns.filter(field => !table.columns.some(column => column.name === field.name));
+      if (!missing.length) return table;
+      const sql = table.sql?.replace(/\)\s*$/, missing.map(field => ', ' + field.name + ' ' + field.sql).join('') + ')');
+      return { ...table, columns: [...table.columns, ...missing.map(field => ({ name: field.name, type: field.type, pk: 0 }))],
+        rows: table.rows.map(row => ({ ...Object.fromEntries(missing.map(field => [field.name, field.value])), ...row })), ...(sql ? { sql } : {}) };
+    }
     if (!productCostTables.some(name => name === table.name) || table.columns.some(column => column.name === 'cost_cents')) return table;
     const sql = table.sql && !/\bcost_cents\b/.test(table.sql)
       ? table.sql.replace(/\)\s*$/, ', cost_cents ' + productCostColumnSql + ')') : table.sql;
     return { ...table, columns: [...table.columns, { name: 'cost_cents', type: 'INTEGER', pk: 0 }],
       rows: table.rows.map(row => ({ cost_cents: null, ...row })), ...(sql ? { sql } : {}) };
   }) };
+}
+
+export function legacySessionPlanTable(table: SyncTable): SyncTable {
+  if (table.name !== 'pos_plans') return table;
+  let sql = table.sql;
+  for (const field of sessionPlanColumns) sql = sql?.replace(', ' + field.name + ' ' + field.sql, '');
+  const names = new Set<string>(sessionPlanColumns.map(field => field.name));
+  return { ...table, columns: table.columns.filter(column => !names.has(column.name)),
+    rows: table.rows.map(row => Object.fromEntries(Object.entries(row).filter(([name]) => !names.has(name)))), ...(sql ? { sql } : {}) };
 }
 
 /** Desktop versions before 5.3 cannot install snapshots containing these columns. */

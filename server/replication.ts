@@ -12,11 +12,13 @@ import { join, dirname, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { ApiError, hash } from "../lib/service.ts";
 import { localParts, withinSchedule } from "../lib/domain.ts";
+import { sessionPlanColumns } from '../lib/session-plans.ts';
 import {
   syncTables,
   mobileSyncTables,
   sameValue,
   legacyProductCostTable,
+  legacySessionPlanTable,
   syncKey,
   type SyncSnapshot,
   type SyncTable,
@@ -215,7 +217,7 @@ export function replicaSchema(raw: DatabaseSync, kind: 'desktop' | 'mobile'): Sy
 }
 
 /** Hash file metadata, never the photo contents, when checking an existing revision. */
-export function replicaRevision(ctx: TenantContext, device: Device, productCosts = true) {
+export function replicaRevision(ctx: TenantContext, device: Device, productCosts = true, sessionPlans = true) {
   initializeReplication(ctx.db.raw);
   const files: unknown[] = [];
   const walk = (name: string) => {
@@ -231,12 +233,12 @@ export function replicaRevision(ctx: TenantContext, device: Device, productCosts
   return digest(JSON.stringify([
     ctx.db.raw.prepare('SELECT epoch,version FROM sync_revision WHERE id=1').get(),
     ctx.db.raw.prepare('PRAGMA schema_version').get(),
-    device.kind, !!device.management, productCosts, files,
+    device.kind, !!device.management, productCosts, sessionPlans, files,
   ]));
 }
 
-export async function replicaMetadata(ctx: TenantContext, device: Device, auth: GymAuthorization, productCosts = true) {
-  const revision = replicaRevision(ctx, device, productCosts);
+export async function replicaMetadata(ctx: TenantContext, device: Device, auth: GymAuthorization, productCosts = true, sessionPlans = true) {
+  const revision = replicaRevision(ctx, device, productCosts, sessionPlans);
   const now = Date.now();
   const previous = ctx.db.raw.prepare(
     'SELECT issued_at FROM sync_leases WHERE device_id=? AND revision=? AND expires_at>? ORDER BY issued_at DESC LIMIT 1',
@@ -275,10 +277,11 @@ export async function replicaSnapshot(
   device: Device,
   auth: GymAuthorization,
   productCosts = true,
+  sessionPlans = true,
 ): Promise<SyncSnapshot> {
   const metadata = await replicaMetadata(ctx, device, auth, productCosts);
   const currentTables = replicaTables(ctx.db.raw, device.management ? "desktop" : device.kind);
-  const tables = productCosts ? currentTables : currentTables.map(legacyProductCostTable);
+  const tables = currentTables.map(table => sessionPlans ? table : legacySessionPlanTable(table)).map(table => productCosts ? table : legacyProductCostTable(table));
   const assets =
     device.kind === "desktop" || device.management ? replicaAssets(ctx.root) : undefined;
   const triggers = (
@@ -519,6 +522,10 @@ export function mergeReplica(
               .prepare(`SELECT * FROM "${table.name}" WHERE ${where}`)
               .get(...args) as SyncRow | undefined);
       // Older clients never read these columns. Their edits must preserve the cloud cost.
+      if (table.name === 'pos_plans')
+        for (const value of [before, after])
+          for (const field of sessionPlanColumns)
+            if (value && !Object.prototype.hasOwnProperty.call(value, field.name)) value[field.name] = current?.[field.name] ?? field.value;
       if (table.name === 'pos_products' || table.name === 'pos_sale_lines')
         for (const value of [before, after])
           if (value && !Object.prototype.hasOwnProperty.call(value, 'cost_cents'))

@@ -1,15 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { isNaturalVoice, recordedAccessVoice, voiceGender, voiceIdentity, voiceRateLimits } from '../lib/access-feedback';
-import { findGympassVoice, gympassVoiceId, gympassVoices } from '../lib/voice-catalog';
+import { accessVoiceMode, beepAccessVoice, recordedAccessVoice, voiceRateLimits } from '../lib/access-feedback';
 import { Field } from './ui';
 import { usePreferences, updatePreferences, type Preferences } from './preferences';
-import { accessFeedback, prepareAccessVoice, prepareAudio, stopFeedback, subscribeAccessVoices } from './feedback';
+import { accessFeedback, prepareAccessVoice, prepareAudio, stopFeedback } from './feedback';
 import './styles/appearance.css';
-
-const voiceGroups = [
-  { gender: 'female', label: 'Voces femeninas de GymPASS' },
-  { gender: 'male', label: 'Voces masculinas de GymPASS' },
-] as const;
 
 /** Avisos de entrada y salida: audios, voces y vibración de este dispositivo. */
 export default function AccessSounds() {
@@ -18,28 +12,25 @@ export default function AccessSounds() {
   const [saveMessage, setSaveMessage] = useState('');
   const draft = { ...preferences, ...changes };
   const dirty = Object.entries(changes).some(([key, value]) => preferences[key as keyof Preferences] !== value);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [sampleName, setSampleName] = useState('María Pérez');
   const [testing, setTesting] = useState(false);
   const [previewMessage, setPreviewMessage] = useState('');
   const previewId = useRef(0);
   useEffect(() => {
-    const unsubscribe = subscribeAccessVoices(setVoices);
     return () => {
-      unsubscribe();
       previewId.current++;
       stopFeedback();
     };
   }, []);
 
-  const gympassVoice = findGympassVoice(draft.voiceURI);
-  const recorded = draft.voiceURI === recordedAccessVoice;
-  const selected = recorded || gympassVoice || voices.some((voice) => voiceIdentity(voice) === draft.voiceURI);
+  const mode = accessVoiceMode(draft.voiceURI);
+  const recorded = mode === recordedAccessVoice;
+  const beep = mode === beepAccessVoice;
+  const named = !recorded && !beep;
   const voiceHint = recorded
     ? 'Tus grabaciones: «Acceso permitido» cuando el código es válido y «Acceso denegado» cuando no lo es o está vencido. Se reproducen sin añadir nombres.'
-    : gympassVoice
-    ? 'La primera prueba descarga unos 110 MB. En recepción se usa una voz del dispositivo si la voz elegida tarda; los avisos generados se guardan para repetirlos al instante.'
-    : 'La voz automática prioriza voces locales para responder rápido. Las voces anuncian el nombre también cuando el acceso es denegado.';
+    : beep ? 'Un beep para acceso correcto y otro distinto para acceso denegado. Sin voz ni nombres.'
+    : 'Una sola voz en español del dispositivo anuncia la entrada, salida o acceso denegado junto con el nombre. Sin descargar modelos.';
   const cancelPreview = () => {
     previewId.current++;
     setTesting(false);
@@ -66,20 +57,19 @@ export default function AccessSounds() {
     setSaveMessage(stored ? 'Cambios guardados en este navegador.' : 'Cambios aplicados durante esta sesión.');
   };
   const selectVoice = (id: string) => {
-    const voice = voices.find((choice) => voiceIdentity(choice) === id);
-    changeVoice({ voiceURI: id, voiceGender: findGympassVoice(id)?.gender ?? (voice ? voiceGender(voice) : 'auto') });
+    changeVoice({ voiceURI: accessVoiceMode(id), voiceGender: 'auto' });
   };
   const preview = async (direction: 'entry' | 'exit', allowed = true) => {
     const id = ++previewId.current;
     setTesting(true);
-    setPreviewMessage(recorded ? 'Reproduciendo el audio…' : gympassVoice ? `Preparando la voz de ${gympassVoice.name}…` : 'Probando la voz…');
+    setPreviewMessage(named ? 'Probando la voz con nombre…' : 'Reproduciendo el sonido…');
     const played = await accessFeedback(allowed, true, false, direction, sampleName.trim() || 'María Pérez', draft, true);
     if (id !== previewId.current) return;
     setTesting(false);
     setPreviewMessage(played === 'none' ? 'No se pudo reproducir el aviso. Comprueba el audio del dispositivo.'
-      : played === 'tone' ? 'No se pudo reproducir el aviso seleccionado. Se usó el tono de confirmación.'
+      : played === 'tone' ? beep ? `Beep de acceso ${allowed ? 'correcto' : 'denegado'} reproducido.` : 'La voz no está disponible. Se reprodujo el beep de confirmación.'
       : played === 'recorded' ? `Audio de acceso ${allowed ? 'permitido' : 'denegado'} reproducido.`
-      : gympassVoice && played === 'device' ? 'No se pudo cargar esta voz. Se usó una voz del dispositivo.' : '');
+      : '');
   };
   return (
     <section className="panel padded appearance-panel">
@@ -107,37 +97,22 @@ export default function AccessSounds() {
       <section className="access-voice-settings" aria-label="Avisos de voz">
         <h3>Sonidos y voces</h3>
         <div className="form-grid">
-          <Field label="Voz de los avisos" hint={voiceHint}>
-            <select value={selected ? draft.voiceURI : ''} onChange={(event) => selectVoice(event.target.value)}>
+          <Field label="Tipo de aviso" hint={voiceHint}>
+            <select value={mode} onChange={(event) => selectVoice(event.target.value)}>
+              <option value="">Voz con nombre</option>
               <option value={recordedAccessVoice}>Audios de acceso permitido y denegado</option>
-              <option value="">Automática (voz del dispositivo)</option>
-              {voiceGroups.map(({ gender, label }) => (
-                <optgroup key={gender} label={label}>
-                  {gympassVoices.filter((voice) => voice.gender === gender).map((voice) => (
-                    <option key={gympassVoiceId(voice)} value={gympassVoiceId(voice)}>{voice.name}</option>
-                  ))}
-                </optgroup>
-              ))}
-              {voices.length > 0 && (
-                <optgroup label="Voces del dispositivo">
-                  {voices.map((voice) => (
-                    <option key={voiceIdentity(voice)} value={voiceIdentity(voice)}>
-                      {voice.name} · {voice.lang}{isNaturalVoice(voice) && !/natural/i.test(voice.name) ? ' · Natural' : ''}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
+              <option value={beepAccessVoice}>Beeps: correcto y denegado</option>
             </select>
           </Field>
-          {!recorded && <Field label={`Velocidad de voz (${Math.round(draft.voiceRate * 100)} %)`} hint="De 50 % a 300 %. 100 % es la velocidad normal.">
+          {named && <Field label={`Velocidad de voz (${Math.round(draft.voiceRate * 100)} %)`} hint="De 50 % a 300 %. 100 % es la velocidad normal.">
             <input type="range" {...voiceRateLimits} value={draft.voiceRate} onChange={(event) => changeVoice({ voiceRate: event.target.valueAsNumber })} />
           </Field>}
-          {!recorded && <Field label="Nombre para probar">
+          {named && <Field label="Nombre para probar">
             <input value={sampleName} maxLength={80} onChange={(event) => setSampleName(event.target.value)} />
           </Field>}
         </div>
         <div className="voice-preview-actions">
-          {recorded ? (
+          {!named ? (
             <>
               <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('entry')}>Probar acceso permitido</button>
               <button type="button" className="btn secondary" disabled={testing} onClick={() => void preview('entry', false)}>Probar acceso denegado</button>

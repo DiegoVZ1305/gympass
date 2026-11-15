@@ -149,11 +149,12 @@ export async function replicationApi(
     authorizeReplica(store, ctx, token);
   });
   const productCosts = req.headers['x-gympass-product-costs'] === '1';
+  const sessionPlans = req.headers['x-gympass-session-plans'] === '1';
   if (action === 'snapshot' && method === 'GET') {
     const unchanged = await manager.withTenant(gym, async ctx => {
       const { device, auth } = authorizeReplica(store, ctx, token);
-      if (url.searchParams.get('revision') !== replicaRevision(ctx, device, productCosts)) return false;
-      const metadata = await replicaMetadata(ctx, device, auth, productCosts);
+      if (url.searchParams.get('revision') !== replicaRevision(ctx, device, productCosts, sessionPlans)) return false;
+      const metadata = await replicaMetadata(ctx, device, auth, productCosts, sessionPlans);
       authorizeReplica(store, ctx, token);
       json(res, { ...metadata, unchanged: true });
       return true;
@@ -176,7 +177,7 @@ export async function replicationApi(
         data_uri: `data:image/${String(person.photo_path).endsWith('.webp') ? 'webp' : 'png'};base64,${bytes.toString('base64')}` });
     }
     if (action === "snapshot" && method === "GET") {
-      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts);
+      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts, undefined, sessionPlans);
     }
     if (action === "push" && method === "POST") {
       const result = mergeReplica(ctx, device, auth, body as any);
@@ -196,7 +197,7 @@ export async function replicationApi(
             if (row) ids[String(change.after.id)] = Number(row.id);
           }
       if (result.status === 'conflict') return json(res, { ...result, event_ids: ids });
-      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts, { ...result, event_ids: ids });
+      return prepareReplicaSnapshot(ctx, res, device, auth, store, token, productCosts, { ...result, event_ids: ids }, sessionPlans);
     }
     throw new ApiError(404, "Operación de sincronización no disponible.");
     });
