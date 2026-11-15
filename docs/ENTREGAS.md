@@ -25,7 +25,7 @@ La compilación comprueba las huellas de los recursos retenidos, genera y compri
 
 ## Android y Windows
 
-La entrega 5.5.1 se prepara desde los clientes 5.5.0 con `client-releases/5.5.1-native.patch`. Comprueba primero con `git apply --check --ignore-space-change --directory=acceso pagina/gympass/client-releases/5.5.1-native.patch` desde `GymPASS/` y despu?s aplica sin `--check`. Incluye el soporte por WhatsApp, la migraci?n 028 de cierre a las 23:59, la actualizaci?n de copias Android y su mantenimiento peri?dico sin conexi?n. Las claves de firma y los datos quedan fuera del parche.
+La entrega 5.5.1 se prepara desde los clientes 5.5.0 con `client-releases/5.5.1-native.patch`. Comprueba primero con `git apply --check --ignore-space-change --directory=acceso pagina/gympass/client-releases/5.5.1-native.patch` desde `GymPASS/` y después aplica sin `--check`. Incluye el soporte por WhatsApp, la migración 028 de cierre a las 23:59, la actualización de copias Android y su mantenimiento periódico sin conexión. Las claves de firma y los datos quedan fuera del parche.
 
 La entrega 5.5.0 se prepara desde los clientes 5.4.0 con `client-releases/5.5.0-native.patch`. Comprueba primero con `git apply --check --ignore-space-change --directory=acceso pagina/gympass/client-releases/5.5.0-native.patch` desde `GymPASS/` y después aplica sin `--check`. Incluye la migración 027, la ampliación de las copias móviles guardadas, los tres avisos y el catálogo que crece con la página. Los clientes anuncian `X-GymPASS-Session-Plans: 1`; las versiones anteriores reciben un esquema sin las columnas nuevas y sus ediciones preservan el plazo guardado en la nube.
 

@@ -34,7 +34,9 @@
 @media (max-width: 850px) {
   .support-trigger span { display: none; }
   .app-shell .support-trigger { padding-inline: 0; width: 44px; }
+  .app-shell .topbar-right { flex-wrap: wrap; max-width: 100%; }
+  .app-shell .topbar-right .connection-status { max-width: 100%; }
 }
 @media (max-width: 360px) {
-  .app-shell .topbar-right { gap: 0; flex-wrap: wrap; max-width: 100%; }
+  .app-shell .topbar-right { gap: 0; }
 }

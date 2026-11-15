@@ -2,10 +2,10 @@
 
 ## 5.5.1
 
-- Bot?n de WhatsApp junto a la campana, con Diego Vargas (+591 62629717) y Mateo Bazoberry (+591 76738942). El mensaje preparado incluye la versi?n y permite describir el problema antes de enviarlo.
-- Cierre diario de todas las presencias pendientes a las 23:59 en la zona horaria del gimnasio, activado tambi?n en gimnasios existentes mediante la migraci?n 028. Las salidas reales se conservan y las autom?ticas se identifican como estimadas; no consumen sesiones.
-- Mantenimiento peri?dico en servidor, Windows y copia Android. Si el equipo estaba apagado, recupera las salidas pendientes con la hora del cierre correspondiente al volver. Android guarda las salidas sin Internet con autorizaci?n vigente y las sincroniza al reconectar.
-- Web, instalador y portable Windows y APK Android en 5.5.1. Android conserva paquete y firma y usa el c?digo 5510. Se conservan los recursos web de 5.5.0 para pesta?as abiertas.
+- Botón de WhatsApp junto a la campana, con Diego Vargas (+591 62629717) y Mateo Bazoberry (+591 76738942). El mensaje preparado incluye la versión y permite describir el problema antes de enviarlo.
+- Cierre diario de todas las presencias pendientes a las 23:59 en la zona horaria del gimnasio, activado también en gimnasios existentes mediante la migración 028. Las salidas reales se conservan y las automáticas se identifican como estimadas; no consumen sesiones.
+- Mantenimiento periódico en servidor, Windows y copia Android. Si el equipo estaba apagado, recupera las salidas pendientes con la hora del cierre correspondiente al volver. Android guarda las salidas sin Internet con autorización vigente y las sincroniza al reconectar.
+- Web, instalador y portable Windows y APK Android en 5.5.1. Android conserva paquete y firma y usa el código 5510. Se conservan los recursos web de 5.5.0 para pestañas abiertas.
 
 ## 5.5.0
 

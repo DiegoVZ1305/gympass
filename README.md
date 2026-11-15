@@ -40,7 +40,7 @@ Se conservan los recursos web de la versión actual y de la inmediatamente anter
 
 ## Uso
 
-El bot?n de WhatsApp junto a la campana abre los contactos de Diego Vargas (+591 62629717) y Mateo Bazoberry (+591 76738942). El gimnasio cierra las presencias pendientes a las 23:59 de su zona horaria; las salidas autom?ticas quedan identificadas como estimadas en el historial.
+El botón de WhatsApp junto a la campana abre los contactos de Diego Vargas (+591 62629717) y Mateo Bazoberry (+591 76738942). El gimnasio cierra las presencias pendientes a las 23:59 de su zona horaria; las salidas automáticas quedan identificadas como estimadas en el historial.
 
 El inicio guía al administrador para registrar un socio, crear y cobrar un plan, entregar su QR y registrar la entrada. El QR es permanente; el acceso depende de la vigencia o sesiones del plan pagado. Renovar no cambia la credencial.
 

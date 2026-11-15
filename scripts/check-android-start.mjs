@@ -24,13 +24,19 @@ try {
     const launch = adb(['shell', 'am', 'start', '-W', '-n', packageName + '/.MainActivity']);
     if (!/Status: ok/.test(launch)) throw Error('Android no pudo abrir la actividad.');
     let ready = false;
-    for (let check = 0; check < 10; check++) {
+    for (let check = 0; check < 20; check++) {
       await delay(1500);
       let pid;
       try { pid = adb(['shell', 'pidof', packageName]).trim(); } catch { throw Error('GymPASS se cerró durante el arranque. Consulta ' + logPath); }
       if (!pid) throw Error('GymPASS terminó durante el arranque.');
-      adb(['shell', 'uiautomator', 'dump', '/sdcard/gympass-smoke.xml']);
-      const ui = adb(['shell', 'cat', '/sdcard/gympass-smoke.xml']);
+      // A failed dump can leave yesterday's screen behind. Never accept that as a successful start.
+      adb(['shell', 'rm', '-f', '/sdcard/gympass-smoke.xml']);
+      let ui;
+      try {
+        adb(['shell', 'uiautomator', 'dump', '/sdcard/gympass-smoke.xml']);
+        ui = adb(['shell', 'cat', '/sdcard/gympass-smoke.xml']);
+      } catch { continue; }
+      if (ui.includes('Abriendo GymPASS')) continue;
       const webLogin = ui.includes('android.webkit.WebView') && ui.includes('Iniciar sesión') && ui.includes('Correo electrónico') && ui.includes('Gestión');
       const readerLogin = ui.includes('Te damos la bienvenida') && ui.includes('Dirección HTTPS de GymPASS');
       const readerReady = ui.includes('Recepción') && ui.includes('Lector sin conexión') && (ui.includes('Centra el QR en el recuadro') || ui.includes('Coloca el QR completo dentro de la imagen')) && !ui.includes('Iniciar sesión');
