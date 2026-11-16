@@ -77,7 +77,7 @@ export default function Settings({ data, admin, saved, notify, members, devices,
     {
       id: 'members',
       label: 'Personal',
-      description: platform
+      description: platform && !platform.local
         ? 'Crea cuentas y administra los permisos del personal de este gimnasio.'
         : members.length
           ? `${members.length} ${members.length === 1 ? 'persona' : 'personas'} con acceso al sistema. Rol y estado de cada una.`
@@ -456,7 +456,7 @@ export default function Settings({ data, admin, saved, notify, members, devices,
             )}
             {admin &&
               active.id === 'members' &&
-              (platform ? (
+              (platform && !platform.local ? (
                 <PlatformMembers
                   gymId={platform.gym_id}
                   superadmin={platform.superadmin}

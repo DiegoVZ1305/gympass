@@ -181,6 +181,7 @@ export class ReplicaClient {
           "X-Requested-With": "GymPASS",
           "X-GymPASS-Product-Costs": "1",
           'X-GymPASS-Session-Plans': '1',
+          'X-GymPASS-Renewal-Contacts': '1',
           ...headers,
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),

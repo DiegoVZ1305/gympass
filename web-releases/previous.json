@@ -1,69 +1,73 @@
 {
-  "version": "5.5.0",
+  "version": "5.5.1",
   "assets": [
     {
-      "path": "assets/App-D3YSaT3r.js",
-      "sha256": "342c824aa23b9e0caeb40ee1807955d72096a31f89d32e490c950a4d7a35ffce"
+      "path": "assets/App-BumwU2qr.css",
+      "sha256": "e1730d43b7628589509b43a0f7cf271f909600e630986278e6012f8d6ef23e6c"
+    },
+    {
+      "path": "assets/App-DkQwjamA.js",
+      "sha256": "f9375da4210214496848482da638c0059350ffdd37d624b94db3c66d54cafcb9"
+    },
+    {
+      "path": "assets/CloudSync-BHZXpCFe.js",
+      "sha256": "9308bb7018c246643c75bd504f03bb533695f6d64f3b486acbd177d9da96996c"
     },
     {
       "path": "assets/CloudSync-CtzntC40.css",
       "sha256": "ec3738e97fb5e1faed2d8bc0b104d1c3d0c54c57c5b5bf88a31c4f301751b3aa"
     },
     {
-      "path": "assets/CloudSync-Do9bC-3m.js",
-      "sha256": "c8750f545c4b18cd57992d328f3b1e51256f956ff08f2304feed6a01946240c1"
-    },
-    {
       "path": "assets/CommandPalette-Bw4F1r9b.js",
       "sha256": "0e207d2991d07ae981c5e5e004ce0f487b3df286320d83a9a794964ed58b43d4"
     },
     {
-      "path": "assets/Credentials-DuMWVku3.js",
-      "sha256": "d783f43b868e880b33d6dc8dc03f325face44dbd8093c71245e201550e3bc83c"
-    },
-    {
-      "path": "assets/GymVisits-BlCfghVh.js",
-      "sha256": "6157a86b142aa81fa29410da938d5f77f8560ae502db2d96b0ed0b2a873b5a8a"
+      "path": "assets/Credentials-YORShrnJ.js",
+      "sha256": "d6c1f1b0c87a21d10a41dd9599f831eac7ea39a30a0c111abd8d822ca0aa8f97"
     },
     {
       "path": "assets/GymVisits-CdyTh20W.css",
       "sha256": "cf9d661b0785fc0cb2fecc24508f149f0baee46ac9241b9263b1dc06c056edf6"
     },
     {
-      "path": "assets/Kiosk-D8rpKxQW.js",
-      "sha256": "5c5f4451b7da5a491253038600156be4edaac1d0b2005e7693e3acd6c81a2023"
+      "path": "assets/GymVisits-Dv5lRAHE.js",
+      "sha256": "6bc4611b5def5b5a110e2a29a73f0c22bee6e629c17c6bf6045789894242901e"
     },
     {
-      "path": "assets/Manage-B6qlX3tq.js",
-      "sha256": "8bcc7e5ffc6a8cd75775c44405b735a9770d5a53b410da36afc6291cc7403b32"
+      "path": "assets/Kiosk-BFtflhBa.js",
+      "sha256": "2fe010f428a3382a98002799b845bec697c72f5551e6bc8775e48b739e2f24e7"
+    },
+    {
+      "path": "assets/Manage-CjbWLfQZ.js",
+      "sha256": "6ec0c73ad213357eb6a7e2beed5a067fcbccbc27bc8a5ed7bbf231f91582fe36"
     },
     {
       "path": "assets/Manage-l94ACBqx.css",
       "sha256": "2d07289380c104a969e5c29676b7ff66b2e8203bfdc422da66c408597b63fafc"
     },
     {
-      "path": "assets/People-Bsxy8geF.js",
-      "sha256": "edafedb13ca752b195c86fd45523fe99b05d06f765fd37a4245ef71801fc9635"
+      "path": "assets/People-CtLS4hP3.js",
+      "sha256": "676cd1507ee1ad4189385de935b1247e17943a6cffc474d33f3a99ad0d5cb729"
     },
     {
-      "path": "assets/PersistentAccess-Cz6fUoN_.js",
-      "sha256": "9733f47c6c03aa0e863e2495a5a4a3a58f63b25da1da2d102b05e0b8b6bd3439"
+      "path": "assets/PersistentAccess-8bsn-6lS.js",
+      "sha256": "1eb4076bfa9a725f7fa25d6b28c556f381bc92046ab24bb7323a61772568cf36"
+    },
+    {
+      "path": "assets/PersonMemberships-CUW-VDLa.js",
+      "sha256": "974757ff3faed262101bbd048267f024fecfdf366b3dcc5a77426775dee4da7a"
     },
     {
       "path": "assets/PersonMemberships-CVJeYIAs.css",
       "sha256": "274030d9b800a4b2fb4079e0b368389f70a9eff19f295060c4e00e4426ca31c9"
     },
     {
-      "path": "assets/PersonMemberships-ZPeicFah.js",
-      "sha256": "91a607cc762311384c5493f9acdee3c5e96c551e1ff6f9ed91ecbeffbe51b67e"
+      "path": "assets/PlatformAnnouncements-C1Rkkiu7.js",
+      "sha256": "634c1d6365741229aac3b0c06acf14a4a6519d11ba2fb2eeeeca3e5118ebb97d"
     },
     {
-      "path": "assets/PlatformAnnouncements-B_UIPZMl.js",
-      "sha256": "00ad10a099589ea5712a11effc31bca2443139da5e357a05ec6c434e14f6179a"
-    },
-    {
-      "path": "assets/PlatformBackups-CqZ5lHTY.js",
-      "sha256": "d0b69f1e6ea76be801f6efea49bddb5649d9dcb32457cb51fb3194e049b3e06b"
+      "path": "assets/PlatformBackups-nbyAG9RF.js",
+      "sha256": "ea743979fa605bd508c7cf9de2de203067128af65a6b68b30682d8c248b01c33"
     },
     {
       "path": "assets/PlatformBilling-CHi-ENXA.css",
@@ -74,28 +78,28 @@
       "sha256": "d39cd67e8df7935e430eaab5d30bb56100d96f38a41761f2561e2e42092273bb"
     },
     {
-      "path": "assets/PlatformKiosk-C3ofOQUv.js",
-      "sha256": "2bb38045410852ef86053edfe40e290d44c65f645293781cb4f0c8525798a137"
+      "path": "assets/PlatformKiosk-CbfXcZju.js",
+      "sha256": "092a24a9f78d0fe94a4dd6557e22e59eeabee245ce09f6e5ddccf9c86e6d9c7f"
     },
     {
-      "path": "assets/PlatformMembers-BatO7Tfe.js",
-      "sha256": "09c0d09f0315e9b0ac92e48ddc99f64cefc2339169c7e1bae32197c2a714b40b"
+      "path": "assets/PlatformMembers-Dx8CXEbX.js",
+      "sha256": "ea3e9fffaef3ecc51e6f25c6aec83e99b5bbd1eb7c56ac07e376e43df9be6aa0"
     },
     {
-      "path": "assets/Pos-B6r6uBq3.js",
-      "sha256": "9e544dd06c46fd5ec89d4700e96b69992cd306518dd873382602e741b97ae026"
+      "path": "assets/Pos-D08kMbEw.js",
+      "sha256": "eaed8ddf4d741864aa6832a364b3ca2d579bd42e13ff6a4b4bc4b30334821d13"
     },
     {
-      "path": "assets/QueueReview-CN2qMStw.js",
-      "sha256": "9844fa5b402b16459cbfe07ae27456e298dfe57dfe61480f9d18e29db8e92e65"
+      "path": "assets/QueueReview-BGe7MQGT.js",
+      "sha256": "0b63837336db38bc688a050233aa5839fdfb9fb9e900f9c9d5face2a0a9aabeb"
     },
     {
-      "path": "assets/Renewals-xNOdJmR9.js",
-      "sha256": "7885b5e499deff3eeb42af3916479c91ff8e8aaccce6e72324c3527ad7cf855a"
+      "path": "assets/Renewals-DHEHhyQN.js",
+      "sha256": "dac74793636b820870541277e7f0f1990307d0dda4d55f7bf2108c9917cfd548"
     },
     {
-      "path": "assets/Reports-B_TYuy74.js",
-      "sha256": "dec47d8fa1355bd84c3408897724a905e06cb62bad0c74d253f3024b375dbb76"
+      "path": "assets/Reports-rL0mW6BO.js",
+      "sha256": "4d377fcdfd03b7fe5cbda07fe15dc5b60346bd483877d3867861a15027c8e6be"
     },
     {
       "path": "assets/ServerAccessLink-GsRIBbSG.js",
@@ -106,8 +110,8 @@
       "sha256": "515508094aca0a38ed5bf628bbe6bd00e83bc7d12c135e5713bc19d4723f0c90"
     },
     {
-      "path": "assets/ShareCredentialButton-DnVOr5Rn.js",
-      "sha256": "dcaabcb20770291cf41a44f6283a6d3b7c70385323f7d9db74edc731f8399827"
+      "path": "assets/ShareCredentialButton-BMnZSpNu.js",
+      "sha256": "787af4f5a12c35c8b012e8b84180b60b469c0efcb33bf2df8ab6fb4d5b9f5842"
     },
     {
       "path": "assets/ban-DupBVctx.js",
@@ -118,12 +122,12 @@
       "sha256": "dd486a2c316c8b915629aec9e2615dce4c53194c712a0c15921eb2e6582e9e5c"
     },
     {
-      "path": "assets/card-B9rfqolX.js",
-      "sha256": "3ffb200dd6084db2c50b7bc8653ad6fedca310aad580268cb4c569b38092e336"
+      "path": "assets/card-COzAWId8.js",
+      "sha256": "f2184e7e79523259954b0f0af1770e0a64f99b857744339d418120ef80ab9684"
     },
     {
-      "path": "assets/card-download-ehbCU1-E.js",
-      "sha256": "1bc783e129cce67b21086e4bef6ffd70b064527f4c22d35772e70c619e97a3fe"
+      "path": "assets/card-download-BbmBwGQd.js",
+      "sha256": "52685ba83a175f17b94bfa47d80d88d999253e75812446c16b1646c4d311a7d6"
     },
     {
       "path": "assets/chevron-right-C-9iYm4o.js",
@@ -134,8 +138,8 @@
       "sha256": "66dca99faaa357d3a91a695fca572b448619db7aafac7bd5ff9b8f0757dfc3a2"
     },
     {
-      "path": "assets/credential-cards-BlligKEK.js",
-      "sha256": "7fb44e881b54cfb691a32007220f4bc67f5a3afdd6904e3ced1edc28574f0d95"
+      "path": "assets/credential-cards-xrA1LvBw.js",
+      "sha256": "325a882dbb238414468da4d5c914b8b4e68d8be796da3f4db819b6c126bbd04b"
     },
     {
       "path": "assets/csv-BR7wEFcW.js",
@@ -146,12 +150,12 @@
       "sha256": "fee526f20c5b3a0cc59bccdd9f3e26f82e3b7f637477e247a9e5586c6f63827c"
     },
     {
-      "path": "assets/feedback-Byq_IrNq.js",
-      "sha256": "d66f0320eae9d31aa531c73e1b6a48eab3c86caad49b4c439c74624b2a54c91b"
+      "path": "assets/feedback-CPp91YQO.js",
+      "sha256": "3e83224c93794dcc69a4b83c1e00754bdbd5c4e4a3c878a2f62939ed9e11016c"
     },
     {
-      "path": "assets/index-BCecJ8ih.js",
-      "sha256": "bf40c5bbffea8446632febfb78244118d0802971b4d8de6c5b905ad9b7fd86d9"
+      "path": "assets/index-BvUqOfph.js",
+      "sha256": "60a7b93828e1a67cc1a456a0c7d2e8a6b20a7eccec256c4bf315b9b1d9bb979d"
     },
     {
       "path": "assets/index-DTJ3wpjE.css",

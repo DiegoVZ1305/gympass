@@ -296,7 +296,8 @@ export type Settings = {
 };
 export type Bootstrap = {
   replica?: { linked: boolean };
-  platform?: { gym_id: string; gym_name: string; support: boolean; superadmin: boolean; read_only: boolean };
+  /** `local` marca una copia que atiende sin Internet: el personal se lee de la copia, no de la plataforma. */
+  platform?: { gym_id: string; gym_name: string; support: boolean; superadmin: boolean; read_only: boolean; local?: boolean };
   activation?: {
     machineId: string;
     state: 'trial' | 'active' | 'expired';

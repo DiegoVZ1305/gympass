@@ -37,9 +37,9 @@ async function* assetFiles(root: string, name: string): AsyncGenerator<string> {
   else if (info.isFile()) yield name;
 }
 
-async function* snapshotChunks(ctx: TenantContext, metadata: Metadata, productCosts: boolean, sessionPlans: boolean) {
+async function* snapshotChunks(ctx: TenantContext, metadata: Metadata, productCosts: boolean, sessionPlans: boolean, renewalContacts = true) {
   const management = metadata.kind === 'desktop' || metadata.scope === 'management';
-  const schema = replicaSchema(ctx.db.raw, management ? 'desktop' : 'mobile');
+  const schema = replicaSchema(ctx.db.raw, management ? 'desktop' : 'mobile', renewalContacts);
   const triggers = ctx.db.raw.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name NOT LIKE 'sync_%' ORDER BY name").all().map(row => row.sql);
   yield JSON.stringify(metadata).slice(0, -1) + ',"triggers":' + JSON.stringify(triggers) + ',"tables":[';
   let firstTable = true;
@@ -100,11 +100,11 @@ async function* snapshotChunks(ctx: TenantContext, metadata: Metadata, productCo
 /** Preserves protocol 1: installed Android and Windows clients need no update. */
 export async function sendReplicaSnapshot(
   ctx: TenantContext, res: ServerResponse, metadata: Metadata, productCosts: boolean,
-  authorize: () => void, envelope?: Record<string, unknown>, sessionPlans = true,
+  authorize: () => void, envelope?: Record<string, unknown>, sessionPlans = true, renewalContacts = true,
 ) {
   const chunks = async function* () {
     if (envelope) yield JSON.stringify(envelope).slice(0, -1) + ',"snapshot":';
-    yield* snapshotChunks(ctx, metadata, productCosts, sessionPlans);
+    yield* snapshotChunks(ctx, metadata, productCosts, sessionPlans, renewalContacts);
     if (envelope) yield '}';
   };
   await sendStream(res, chunks(), { 'Content-Type': 'application/json; charset=utf-8' }, authorize, true);
@@ -114,9 +114,9 @@ export async function sendReplicaSnapshot(
 export async function prepareReplicaSnapshot(
   ctx: TenantContext, res: ServerResponse, device: Parameters<typeof replicaMetadata>[1],
   auth: Parameters<typeof replicaMetadata>[2], store: PlatformStore, token: string,
-  productCosts: boolean, envelope?: Record<string, unknown>, sessionPlans = true,
+  productCosts: boolean, envelope?: Record<string, unknown>, sessionPlans = true, renewalContacts = true,
 ) {
-  const metadata = await replicaMetadata(ctx, device, auth, productCosts, sessionPlans);
+  const metadata = await replicaMetadata(ctx, device, auth, productCosts, sessionPlans, renewalContacts);
   const file = ctx.db.raw.location()!;
   const reader = new DatabaseSync(file, { readOnly: true });
   let authorization: DatabaseSync | undefined;
@@ -143,7 +143,7 @@ export async function prepareReplicaSnapshot(
     const snapshotContext = { ...ctx, root: frozen || ctx.root, db: { raw: reader } as TenantContext['db'] };
     return async () => {
       try {
-        await sendReplicaSnapshot(snapshotContext, res, metadata, productCosts, () => { authorizeReplica(store, authorizeContext, token, false); }, envelope, sessionPlans);
+        await sendReplicaSnapshot(snapshotContext, res, metadata, productCosts, () => { authorizeReplica(store, authorizeContext, token, false); }, envelope, sessionPlans, renewalContacts);
       } finally { dispose(); }
     };
   } catch (error) { dispose(); throw error; }

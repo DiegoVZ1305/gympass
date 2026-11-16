@@ -161,6 +161,14 @@ export async function serveCredentialShare(
   const picture = `${origin}/c/${gymId}/${token}.png`;
   const title = 'Credencial de ' + share.name;
   const description = 'Preséntala en recepción' + (organization ? ' de ' + organization : '') + '.';
+  // El nombre del archivo viaja en un atributo HTML: solo se conservan letras, numeros y guiones.
+  const slug = share.name
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  const fileName = 'credencial-' + (slug || 'gympass') + '.png';
   const html =
     `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<meta name="robots" content="noindex,nofollow"><title>${escapeHtml(title)}</title>` +
@@ -168,9 +176,16 @@ export async function serveCredentialShare(
     `<meta property="og:description" content="${escapeHtml(description)}"><meta property="og:image" content="${escapeHtml(picture)}">` +
     `<meta property="og:image:type" content="image/png"><meta name="twitter:card" content="summary_large_image">` +
     `<style>body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#14181d;color:#e6eaef;font:16px system-ui,sans-serif}` +
-    `main{padding:16px;text-align:center}img{display:block;width:min(92vw,400px);height:auto;border-radius:20px;margin:0 auto 16px}` +
-    `p{margin:0;color:#c5ccd5}</style></head><body><main><img src="${escapeHtml(picture)}" alt="${escapeHtml(title)}">` +
-    `<p>${escapeHtml(description)}</p></main></body></html>`;
+    `main{padding:16px;text-align:center;width:min(92vw,400px)}img{display:block;width:100%;height:auto;border-radius:20px;margin:0 auto 16px}` +
+    `a.save{display:flex;align-items:center;justify-content:center;gap:8px;margin:0 0 12px;padding:14px 18px;border-radius:12px;` +
+    `background:#636b2f;color:#fff;font-weight:700;text-decoration:none}a.save:active{background:#535a27}` +
+    `p{margin:0;color:#c5ccd5;font-size:14px}</style></head><body><main><img src="${escapeHtml(picture)}" alt="${escapeHtml(title)}">` +
+    `<a class="save" href="${escapeHtml(picture)}" download="${escapeHtml(fileName)}">` +
+    `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+    `<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>` +
+    `Descargar imagen</a>` +
+    `<p>${escapeHtml(description)}</p>` +
+    `<p>Si el botón no guarda la imagen, mantén pulsada la credencial y elige «Guardar imagen».</p></main></body></html>`;
   res.writeHead(200, { ...headers, 'Content-Type': 'text/html; charset=utf-8' });
   res.end(req.method === 'HEAD' ? undefined : html);
 }

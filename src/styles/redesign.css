@@ -474,10 +474,14 @@ tbody tr:hover {
     content: 'WHATSAPP';
   }
   .renewals-table .row-actions {
-    gap: 6px;
+    gap: 8px;
   }
+  /* `flex: 1` daba base 0: los botones se encogian hasta partir el texto letra a letra
+     en lugar de pasar a la linea siguiente. Con base automatica y un ancho minimo, envuelven. */
   .renewals-table .row-actions .btn {
-    flex: 1;
+    flex: 1 1 auto;
+    min-width: 124px;
+    white-space: nowrap;
   }
   .page-heading {
     gap: 16px;

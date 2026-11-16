@@ -84,6 +84,14 @@ export function legacyProductCostTable(table: SyncTable): SyncTable {
     rows: table.rows.map(row => Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'cost_cents'))),
     ...(sql ? { sql } : {}) };
 }
+/**
+ * Las versiones anteriores a 5.5.2 no conocen `renewal_contacts` y rechazan la copia entera
+ * al encontrarla, asi que a quien no anuncia la capacidad se le envia sin esa tabla.
+ */
+export const renewalContactsTable = 'renewal_contacts';
+export function withoutRenewalContacts(tables: SyncTable[]): SyncTable[] {
+  return tables.filter((table) => table.name !== renewalContactsTable);
+}
 export function renewSyncSnapshot(
   base: SyncSnapshot,
   update: SyncUnchanged,
@@ -146,6 +154,7 @@ export const syncTables = [
   "events",
   "pos_membership_uses",
   "pos_stock_movements",
+  "renewal_contacts",
   "audit",
 ] as const;
 export const mobileSyncTables = new Set<string>([

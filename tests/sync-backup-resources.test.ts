@@ -37,7 +37,7 @@ async function fixture(t: any) {
   const auth = app.store.authorizeSync(login.token, gym.id);
   const pair = await app.tenants.withTenant(gym, async ctx => pairReplica(ctx, auth, { name: 'Windows', kind: 'desktop' }, app.store.linkedCredentialRevision(auth.user.id)));
   const request = (revision?: string, costs = true) => fetch(app.url + `/api/gyms/${gym.id}/sync/snapshot` + (revision ? '?revision=' + revision : ''), {
-    headers: { Authorization: 'Bearer ' + pair.token, 'X-GymPASS-Session-Plans': '1', ...(costs ? { 'X-GymPASS-Product-Costs': '1' } : {}) },
+    headers: { Authorization: 'Bearer ' + pair.token, 'X-GymPASS-Session-Plans': '1', 'X-GymPASS-Renewal-Contacts': '1', ...(costs ? { 'X-GymPASS-Product-Costs': '1' } : {}) },
   });
   return { root, app, gym, pair, request };
 }
