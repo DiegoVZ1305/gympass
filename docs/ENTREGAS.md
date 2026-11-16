@@ -8,7 +8,7 @@ GitHub Actions publica el mismo `dist/` generado y verificado en su trabajo de c
 
 ## Retención de recursos
 
-Se distribuyen dos conjuntos: el actual y el descrito en `web-releases/previous.json`. Para 5.5.2 se conserva el grafo completo publicado de 5.5.1. Esto permite que sus pestañas abiertas soliciten sus pantallas diferidas tras actualizar. Las sesiones de versiones anteriores deben recargarse.
+Se distribuyen dos conjuntos: el actual y el descrito en `web-releases/previous.json`. Para 5.5.3 se conserva el grafo completo publicado de 5.5.2. Esto permite que sus pestañas abiertas soliciten sus pantallas diferidas tras actualizar. Las sesiones de versiones anteriores deben recargarse.
 
 Los lectores QR referenciados por clientes existentes se conservan además en `web-releases/compatibility.json`. La compilación entrega **todos** los recursos emitidos por Vite y valida las importaciones de JavaScript mediante su árbol de sintaxis, incluidas las cadenas entre comillas invertidas. No se eliminan archivos de la compilación actual basándose en una búsqueda textual.
 
@@ -24,6 +24,8 @@ Para preparar una versión posterior:
 La compilación comprueba las huellas de los recursos retenidos, genera y comprime la nueva interfaz en staging y solo entonces actualiza `dist/`. Los archivos obsoletos se eliminan únicamente de `dist/assets/`. Los APK y EXE se alojan en GitHub Releases; `dist/descargas/` deja de contener instaladores antiguos.
 
 ## Android y Windows
+
+La entrega 5.5.3 añade el selector de código de país en el WhatsApp del socio, con Bolivia (+591) por defecto, en el alta de socios y en el alta desde Caja. Un número guardado sin código reconocible se conserva entero y la ficha lo marca, en lugar de anteponerle el código por defecto y cambiarlo sin aviso. Con el número completo, el botón de WhatsApp de «Planes por vencer» y el envío de la credencial abren el chat del socio. Tampoco tiene instaladores publicados todavía.
 
 La entrega 5.5.2 corrige la aplicación móvil y la web, y **todavía no tiene instaladores publicados**: los enlaces de descarga siguen apuntando a 5.5.1, que es la última entrega nativa verificada. Incluye la replicación de `renewal_contacts`, que arregla «Planes por vencer» en el teléfono; el personal que se lee de la copia local en lugar de la plataforma; el botón de descarga en el enlace de credencial; y los botones de renovación que ya no parten el texto en pantallas estrechas. Los clientes nuevos anuncian `X-GymPASS-Renewal-Contacts: 1`; los anteriores reciben la copia sin esa tabla y siguen sincronizando. Falta generar `client-releases/5.5.2-native.patch` y compilar APK e instalador antes de cambiar los enlaces.
 

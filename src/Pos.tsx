@@ -20,6 +20,7 @@ import { api, NetworkError, HttpError } from './api';
 import { usePeople } from './usePeople';
 import { newRequestId } from './browser';
 import PersonMemberships from './PersonMemberships';
+import PhoneField from './PhoneField';
 import SessionDeadline from './SessionDeadline';
 import PosReports from './PosReports';
 import ShareCredentialButton from './ShareCredentialButton';
@@ -645,16 +646,7 @@ export function Checkout({
               <Field label="Documento de identidad">
                 <input name="document" required maxLength={120} defaultValue={newMember?.document || ''} />
               </Field>
-              <Field label="WhatsApp" hint="Incluye el código de país, por ejemplo 59171234567.">
-                <input
-                  name="phone"
-                  type="tel"
-                  required
-                  maxLength={24}
-                  autoComplete="tel"
-                  defaultValue={newMember?.phone || ''}
-                />
-              </Field>
+              <PhoneField required defaultValue={newMember?.phone || ''} />
             </Form>
           </Modal>,
           document.body,

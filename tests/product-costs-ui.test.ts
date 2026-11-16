@@ -8,7 +8,7 @@ function editor(t: { after(fn: () => void): void }, item?: unknown) {
   const { CatalogEditor } = h.load('../src/Pos.tsx', {
     'react-dom': { createPortal: (value: unknown) => value }, 'lucide-react': componentStubs,
     '../lib/pos-types': {}, './api': { api: async (...args: unknown[]) => { calls.push(args); return { id: 'product' }; } },
-    './usePeople': {}, './browser': {}, './PersonMemberships': { default: 'PersonMemberships' },
+    './usePeople': {}, './browser': {}, './PersonMemberships': { default: 'PersonMemberships' }, './PhoneField': { default: 'PhoneField' },
     './PosReports': { default: 'PosReports' }, './ShareCredentialButton': { default: 'ShareCredentialButton' },
     './ui': componentStubs, './styles/pos.css': {},
   });

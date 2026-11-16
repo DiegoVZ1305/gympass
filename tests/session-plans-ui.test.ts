@@ -8,7 +8,7 @@ test('crear un plan por sesiones pide cantidad y plazo por separado y los envía
   const { CatalogEditor } = h.load('../src/Pos.tsx', {
     'react-dom': { createPortal: (value: unknown) => value }, 'lucide-react': componentStubs,
     './api': { api: async (_path: string, _method: string, body: any) => { saved = body; return { id: 'plan' }; } },
-    './usePeople': {}, './browser': {}, './PersonMemberships': { default: 'PersonMemberships' }, './PosReports': { default: 'PosReports' },
+    './usePeople': {}, './browser': {}, './PersonMemberships': { default: 'PersonMemberships' }, './PhoneField': { default: 'PhoneField' }, './PosReports': { default: 'PosReports' },
     './ShareCredentialButton': { default: 'ShareCredentialButton' }, './ui': componentStubs, './styles/pos.css': {},
   });
   let tree = h.render(() => CatalogEditor({ kind: 'plan', onClose() {}, onSaved: async () => {} }));

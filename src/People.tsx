@@ -15,6 +15,7 @@ import {
 import { api, HttpError } from './api';
 import { copyText, newRequestId } from './browser';
 import PersonMemberships from './PersonMemberships';
+import PhoneField from './PhoneField';
 import SessionDeadline from './SessionDeadline';
 import { logoUrl } from './branding';
 import ScopedImage from './ScopedImage';
@@ -192,17 +193,15 @@ export function PersonForm({
                 placeholder="Ej. 1234567"
               />
             </Field>
-            <Field label="WhatsApp" hint="Obligatorio para socios. Incluye el código de país, por ejemplo 59171234567.">
-              <input
-                name="phone"
-                required={kind === 'member'}
-                type="tel"
-                inputMode="tel"
-                maxLength={24}
-                defaultValue={person?.phone}
-                placeholder={kind === 'member' ? '59171234567' : 'Opcional'}
-              />
-            </Field>
+            <PhoneField
+              required={kind === 'member'}
+              defaultValue={person?.phone}
+              hint={
+                kind === 'member'
+                  ? 'Obligatorio para socios. Elige el país y escribe el número sin el código. Por defecto Bolivia (+591).'
+                  : 'Opcional. Elige el país y escribe el número sin el código.'
+              }
+            />
             <Field label="¿Quién es?">
               <select
                 name="kind"
@@ -969,6 +968,9 @@ export default function People({
       </div>
       {edit && (
         <PersonForm
+          // Cambiar de ficha sin cerrar el formulario debe recargar sus campos,
+          // no conservar el telefono ni el documento de la anterior.
+          key={edit === 'new' ? 'new' : edit.id}
           data={data}
           person={edit === 'new' ? undefined : edit}
           onClose={() => setEdit(null)}

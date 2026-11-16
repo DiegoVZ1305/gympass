@@ -330,6 +330,7 @@ export default function Renewals({
       </p>
       {edit && (
         <PersonForm
+          key={edit.id}
           data={data}
           person={edit}
           onClose={() => setEdit(null)}
