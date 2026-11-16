@@ -1,5 +1,11 @@
 # Cambios
 
+## 5.5.3
+
+- Selector de código de país en el WhatsApp del socio, con Bolivia (+591) por defecto.
+- Incluye las correcciones 5.5.2 de renovaciones, personal local, descarga de credenciales y botones en pantallas estrechas.
+- APK Android, instalador y portable Windows 5.5.3; página de descargas actualizada. Android conserva paquete y firma y utiliza código 5530.
+
 ## 5.5.1
 
 - Botón de WhatsApp junto a la campana, con Diego Vargas (+591 62629717) y Mateo Bazoberry (+591 76738942). El mensaje preparado incluye la versión y permite describir el problema antes de enviarlo.

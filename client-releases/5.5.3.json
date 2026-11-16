@@ -1,0 +1,35 @@
+{
+  "version": "5.5.3",
+  "published": true,
+  "build_method": "local-windows",
+  "web_source_commit": "1c8f70eb340915a9789b1a31da135c0404f37b0c",
+  "android": {
+    "package": "local.gympass.controlacceso.mobile",
+    "version_code": 5530,
+    "certificate_sha256": "a6735a9d424cb835fac4e5ca05f08df8cd9bd9007bdb8cf32f4fa42492187ded",
+    "smoke_passed": true,
+    "cold_starts": 2,
+    "management_startup_passed": true,
+    "android_tested": "17",
+    "page_size": 16384,
+    "phone_physically_tested": false
+  },
+  "windows": {
+    "package_smoke_passed": true,
+    "portable_smoke_passed": true,
+    "setup_version_verified": true,
+    "code_signed": false,
+    "electron_version": "45.0.0",
+    "architecture": "x64",
+    "minimum_os": "Windows 10"
+  },
+  "verification": {
+    "passed_tests_and_checks": { "server": 75, "web": 139, "mobile": 76 }
+  },
+  "files": {
+    "GymPASS-Android-5.5.3.apk": { "sha256": "0db1e23243b6ed0bfe06e41416f8dc14194c59800619106d7ba26d65e7b5d177", "bytes": 67185679 },
+    "GymPASS-Setup-5.5.3.exe": { "sha256": "8378023fb10dd54aeb380683c03cb0877ffecdf35c72249cbc5e9baa435cdcfc", "bytes": 141596542 },
+    "GymPASS-Portable-5.5.3.exe": { "sha256": "be610328df595e1c05336c6bd6ee0ff4fe3cbb6db2bacfb48d228f608785f8df", "bytes": 141342753 }
+  },
+  "release_url": "https://github.com/DiegoVargasZ/gympass/releases/tag/v5.5.3"
+}
