@@ -32,9 +32,12 @@ export function localOrigin(value: string): string {
 
 export function connectionDestination(mode: ConnectionMode, server: string, local: string, desktop: boolean, work?: 'local' | 'server'): string {
   if (desktop) {
-    const query = new URLSearchParams({ mode: mode === 'local' ? 'replica' : mode });
+    const nativeMode = mode === 'local' ? 'replica' : mode;
+    const query = new URLSearchParams({ mode: nativeMode });
     query.set('server', serverOrigin(server || 'https://gympass.site'));
-    if (work || mode === 'local') query.set('work', work || 'local');
+    // A replica has two possible working modes. Always send it explicitly so
+    // the desktop client cannot fall back to the server after restarting.
+    if (nativeMode === 'replica') query.set('work', work || (mode === 'local' ? 'local' : 'server'));
     return 'gympass-connection://apply/?' + query;
   }
   return (mode === 'local' ? localOrigin(local) : serverOrigin(server)) + '/';

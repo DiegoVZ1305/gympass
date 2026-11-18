@@ -1,5 +1,7 @@
 # Política de entregas
 
+La entrega 5.5.4 publica la corrección de persistencia del modo local en la web, Android y Windows. Incluye APK con código 5540, instalador y portable Windows; la prueba física de Android queda pendiente cuando haya un emulador o teléfono conectado.
+
 ## Web reproducible
 
 `package-lock.json` fija las dependencias. Ejecuta `npm ci` y `npm run verify` sobre un checkout limpio. La compilación usa `src/`, `lib/`, `vendor/`, `public/` y la configuración versionada. `dist/release.json` guarda la versión, una huella de las entradas y las huellas de los recursos actuales. No incluye datos del gimnasio ni secretos.

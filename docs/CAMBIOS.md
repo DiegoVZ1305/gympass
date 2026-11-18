@@ -1,5 +1,10 @@
 # Cambios
 
+# 5.5.4
+
+- La conexión de escritorio conserva el modo local al reiniciar y la interfaz incluida en Android y Windows transmite esa elección explícitamente.
+- Android usa código 5540; se publican APK, instalador y portable Windows.
+
 ## 5.5.3
 
 - Selector de código de país en el WhatsApp del socio, con Bolivia (+591) por defecto.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { serverOrigin } from '../src/connection-mode.ts';
+import { connectionDestination, serverOrigin } from '../src/connection-mode.ts';
 import { componentHarness, componentStubs, elementText, findElement } from './component-harness.ts';
 
 test('mostrar y ocultar contraseña conserva valor, validación, nombre y autocompletado y no envía el formulario', async t => {
@@ -37,6 +37,19 @@ test('una cuenta nueva puede abrir el servidor desde el acceso local de Windows 
   assert.equal(target.searchParams.get('mode'), 'remote');
   assert.equal(target.searchParams.get('server'), 'https://gym.example.test');
   assert.match(elementText(link), /Usar mi cuenta del servidor/);
+});
+
+test('la conexión de escritorio conserva explícitamente el modo local de trabajo', () => {
+  const target = new URL(connectionDestination('local', 'https://gym.example.test', 'http://localhost:3000', true));
+  assert.equal(target.protocol, 'gympass-connection:');
+  assert.equal(target.searchParams.get('mode'), 'replica');
+  assert.equal(target.searchParams.get('work'), 'local');
+});
+
+test('la conexión de escritorio también marca el modo servidor explícitamente', () => {
+  const target = new URL(connectionDestination('replica', 'https://gym.example.test', 'http://localhost:3000', true));
+  assert.equal(target.searchParams.get('mode'), 'replica');
+  assert.equal(target.searchParams.get('work'), 'server');
 });
 
 for (const platform of [true, false]) {
