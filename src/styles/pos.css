@@ -447,3 +447,29 @@
 .pos-replace input {
   width: auto;
 }
+
+/* Productos y Planes: filas compactas para ver más del catálogo sin desplazarse. */
+.app-shell .pos-catalog-panel td {
+  padding: 5px 16px;
+  line-height: 1.3;
+}
+.app-shell .pos-catalog-panel th {
+  padding: 8px 16px;
+}
+.app-shell .pos-catalog-panel .num {
+  padding: 5px 16px;
+}
+.app-shell .pos-catalog-panel td small {
+  display: inline;
+  margin: 0 0 0 8px;
+}
+.app-shell .pos-catalog-panel td .btn {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 13px;
+  gap: 6px;
+}
+.app-shell .pos-catalog-panel td .button-row {
+  flex-wrap: nowrap;
+  gap: 6px;
+}

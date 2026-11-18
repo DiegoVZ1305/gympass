@@ -670,7 +670,7 @@ export function CatalogEditor({
   const product = kind === 'product' ? (item as PosProduct | undefined) : undefined;
   const plan = kind === 'plan' ? (item as PosPlan | undefined) : undefined;
   const [planUnit, setPlanUnit] = useState(plan?.unit || 'months');
-  const [cost, setCost] = useState(product?.cost_cents == null ? '' : (product.cost_cents / 100).toFixed(2));
+  const [cost, setCost] = useState(!item ? '0.00' : product?.cost_cents == null ? '' : (product.cost_cents / 100).toFixed(2));
   const [salePrice, setSalePrice] = useState(((item?.price_cents || 0) / 100).toFixed(2));
   const amount = (value: string) => /^\d+(?:[.,]\d{1,2})?$/.test(value.trim())
     ? Math.round(Number(value.trim().replace(',', '.')) * 100) : null;
@@ -714,9 +714,9 @@ export function CatalogEditor({
           <input name="name" required maxLength={120} defaultValue={item?.name} />
         </Field>
         {kind === 'product' && (
-          <Field label="Costo de compra por unidad (BOB)" hint="Lo que te cuesta comprar una unidad del producto.">
+          <Field label="Costo de compra por unidad (BOB)" hint="Lo que te cuesta comprar una unidad. Escribe 0 si prefieres no indicarlo.">
             <input name="cost" required inputMode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?"
-              placeholder="0,00" value={cost} onChange={(event) => setCost(event.target.value)} />
+              placeholder="0,00" onFocus={(event) => event.currentTarget.select()} value={cost} onChange={(event) => setCost(event.target.value)} />
           </Field>
         )}
         <Field label="Precio de venta (BOB)">
@@ -725,6 +725,7 @@ export function CatalogEditor({
             required
             inputMode="decimal"
             pattern="[0-9]+([.,][0-9]{1,2})?"
+            onFocus={(event) => event.currentTarget.select()}
             value={salePrice}
             onChange={(event) => setSalePrice(event.target.value)}
           />
