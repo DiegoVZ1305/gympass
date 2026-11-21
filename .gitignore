@@ -50,3 +50,10 @@
 !/.github/workflows/
 /.github/workflows/*
 !/.github/workflows/verify.yml
+
+!/instaladores/
+!/instaladores/5.7.0/
+!/instaladores/5.7.0/GymPASS-Android-5.7.0.apk
+!/instaladores/5.7.0/GymPASS-Setup-5.7.0.exe
+/instaladores/5.7.0/GymPASS-Portable-5.7.0.exe
+/instaladores/5.7.0/GymPASS-Setup-5.7.0.exe.blockmap
