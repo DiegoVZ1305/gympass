@@ -14,9 +14,9 @@ export default function AppDownloads() {
   return (
     <section className="app-downloads" aria-labelledby="app-downloads-title">
       <h3 id="app-downloads-title">
-        <Download size={18} aria-hidden="true" /> Descarga GymPASS
+        <Download size={18} aria-hidden="true" /> Descargas actuales
       </h3>
-      <p>También puedes usar la aplicación en tu celular o computadora.</p>
+      <p>Elige una de estas dos versiones actualizadas de GymPASS.</p>
       <div className="app-download-options">
         <a className="app-download" href={androidApk} target="_blank" rel="noopener noreferrer">
           <Smartphone size={24} aria-hidden="true" />
