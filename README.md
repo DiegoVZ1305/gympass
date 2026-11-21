@@ -34,9 +34,9 @@ No inicialices una plataforma que ya contiene datos. Antes de actualizar, conser
 
 ## Publicación
 
-Los cambios de `main` se verifican antes de desplegarse cuando `NAMECHEAP_DEPLOY_ENABLED=true`. Los secretos de SSH y las variables de cPanel se describen en [Operación](docs/OPERACION.md). Android y Windows se distribuyen desde las [entregas oficiales](https://github.com/DiegoVargasZ/gympass/releases).
+Los cambios de `main` se verifican antes de desplegarse cuando `NAMECHEAP_DEPLOY_ENABLED=true`. Los secretos de SSH y las variables de cPanel se describen en [Operación](docs/OPERACION.md). Android y Windows 5.7.0 se descargan directamente desde la carpeta de [instaladores del repositorio](https://github.com/DiegoVZ1305/gympass/tree/main/instaladores/5.7.0).
 
-Se conservan los recursos web de la versión actual y de la inmediatamente anterior para las sesiones abiertas. Las versiones más antiguas se retiran del despliegue público; los instaladores históricos permanecen en GitHub Releases. Consulta [la política de entregas](docs/ENTREGAS.md).
+Se conservan los recursos web de la versión actual y de la inmediatamente anterior para las sesiones abiertas. Las versiones más antiguas se retiran del despliegue público; el instalador actual permanece como archivo directo del repositorio. Consulta [la política de entregas](docs/ENTREGAS.md).
 
 ## Uso
 

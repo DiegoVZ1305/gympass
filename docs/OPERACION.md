@@ -20,6 +20,10 @@ En GitHub Actions deben existir los secretos `NAMECHEAP_HOST`, `NAMECHEAP_USER`,
 
 Las variables son `NAMECHEAP_PORT` (21098 por defecto) y `NAMECHEAP_DEPLOY_ENABLED` (`true` habilita el despliegue de `main`). El workflow instala con el lockfile, verifica tipos, compila, ejecuta las pruebas y transfiere el artefacto verificado. Conserva una copia del código anterior en `~/gympass-code-backups`.
 
+Para activarlo en el repositorio `DiegoVZ1305/gympass`, abre **Settings → Secrets and variables → Actions**. En **Variables** crea `NAMECHEAP_DEPLOY_ENABLED=true` y, si hace falta, `NAMECHEAP_PORT=21098`. En **Secrets** crea los seis secretos indicados arriba. `NAMECHEAP_HOST` debe ser el servidor SSH de Namecheap (normalmente `serverXXX.web-hosting.com`, no necesariamente el dominio); `NAMECHEAP_APP_ROOT` es la raíz absoluta de la aplicación Node.js y `NAMECHEAP_NODE_ENV` es la ruta absoluta al `bin/activate` del entorno Node.js que muestra cPanel. La clave privada nunca se guarda en el repositorio.
+
+Después de guardar los secretos, ejecuta **Actions → Verificar y desplegar Namecheap → Run workflow** sobre `main`. El trabajo `verify` debe terminar correctamente y luego `deploy` debe pasar de `skipped` a `success`. Cada push posterior a `main` repetirá la verificación y, si pasa, actualizará `gympass.site` por SSH.
+
 El directorio público `dist/` se sincroniza con eliminación de archivos obsoletos. Los datos, fotos privadas, bases y configuración de cPanel deben estar fuera de ese directorio. El resto de la aplicación se sincroniza sin eliminar datos.
 
 Tras publicar, comprueba `/api/health`, `/release.json` y el login. `npm run check:realtime-host` verifica si el hosting permite WebSocket; el sondeo HTTP permanece como respaldo.
