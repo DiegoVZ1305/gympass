@@ -18,7 +18,7 @@ test('los gimnasios nuevos y existentes activan el cierre diario a las 23:59 sin
   let db = new SqliteDatabase(file);
   db.raw.exec("INSERT INTO settings(id,owner,name,timezone) VALUES(1,'owner','Conservado','America/La_Paz')");
   assert.equal(db.raw.prepare('SELECT closing_time FROM settings').get().closing_time, '23:59');
-  db.raw.exec("UPDATE settings SET closing_time=NULL; DROP TRIGGER settings_default_daily_closing; DELETE FROM schema_version WHERE version=28");
+  db.raw.exec("UPDATE settings SET closing_time=NULL; DROP TRIGGER settings_default_daily_closing; ALTER TABLE settings DROP COLUMN quick_session_product_id; ALTER TABLE settings DROP COLUMN quick_session_payment_method; DELETE FROM schema_version WHERE version>=28");
   db.close();
   db = new SqliteDatabase(file);
   try {

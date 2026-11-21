@@ -1,4 +1,5 @@
 import { appearanceColumns } from './gym-appearance.ts';
+import { quickSessionColumns } from './quick-session.ts';
 import { sessionDeadlineTriggers } from './session-deadlines.ts';
 import { sessionPlanColumns } from './session-plans.ts';
 import { productCostColumnSql, productCostTables } from './product-costs.ts';
@@ -35,23 +36,26 @@ export type SyncUnchanged = Pick<
   | "expires_at"
   | "user"
 > & { unchanged: true };
+const settingsColumns = [...appearanceColumns, ...quickSessionColumns];
 /** Upgrade cached copies without creating edits or changing an in-flight batch. */
-export function upgradeAppearanceSnapshot(snapshot: SyncSnapshot): SyncSnapshot {
+export function upgradeSettingsSnapshot(snapshot: SyncSnapshot): SyncSnapshot {
   return { ...snapshot, tables: snapshot.tables.map(table => {
     if (table.name !== 'settings') return table;
-    const missing = appearanceColumns.filter(field => !table.columns.some(column => column.name === field.name));
+    const missing = settingsColumns.filter(field => !table.columns.some(column => column.name === field.name));
     if (!missing.length) return table;
+    const sql = table.sql?.replace(/\)\s*$/, missing.map(field => ', ' + field.name + ' ' + field.sql).join('') + ')');
     return { ...table, columns: [...table.columns, ...missing.map(field => ({ name: field.name, type: 'TEXT', pk: 0 }))],
-      rows: table.rows.map(row => ({ ...Object.fromEntries(missing.map(field => [field.name, field.value])), ...row })) };
+      rows: table.rows.map(row => ({ ...Object.fromEntries(missing.map(field => [field.name, field.value])), ...row })),
+      ...(sql ? { sql } : {}) };
   }) };
 }
 /** Extend older cached copies without assigning a fabricated purchase cost. */
 export function upgradeManagementSnapshot(snapshot: SyncSnapshot): SyncSnapshot {
-  const appearance = upgradeAppearanceSnapshot(snapshot);
-  return { ...appearance, triggers: appearance.triggers.map(sql => {
+  const upgraded = upgradeSettingsSnapshot(snapshot);
+  return { ...upgraded, triggers: upgraded.triggers.map(sql => {
     const name = /CREATE TRIGGER (pos_one_plan|pos_access_use)\b/i.exec(sql)?.[1] as keyof typeof sessionDeadlineTriggers | undefined;
     return name ? sessionDeadlineTriggers[name] : sql;
-  }), tables: appearance.tables.map(table => {
+  }), tables: upgraded.tables.map(table => {
     if (table.name === 'pos_plans') {
       const missing = sessionPlanColumns.filter(field => !table.columns.some(column => column.name === field.name));
       if (!missing.length) return table;

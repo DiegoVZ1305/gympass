@@ -141,7 +141,7 @@ test('la migración conserva socios anteriores y no concede derechos heredados a
   const file = join(temporary(t), 'gym.sqlite');
   let db = new SqliteDatabase(file);
   db.raw.exec('ALTER TABLE pos_products DROP COLUMN cost_cents; ALTER TABLE pos_sale_lines DROP COLUMN cost_cents; ALTER TABLE pos_plans DROP COLUMN session_period_unit; ALTER TABLE pos_plans DROP COLUMN session_period');
-  db.raw.exec(`DROP TRIGGER settings_default_daily_closing; DELETE FROM schema_version WHERE version>=20; ALTER TABLE settings DROP COLUMN ui_theme; ALTER TABLE settings DROP COLUMN ui_accent; ALTER TABLE settings DROP COLUMN ui_density; DROP INDEX events_chronological_presence; ALTER TABLE people DROP COLUMN legacy_access; ALTER TABLE settings DROP COLUMN logo_watermark_size; ALTER TABLE settings DROP COLUMN credential_color; ALTER TABLE settings DROP COLUMN credential_watermark_size;
+  db.raw.exec(`DROP TRIGGER settings_default_daily_closing; DELETE FROM schema_version WHERE version>=20; ALTER TABLE settings DROP COLUMN ui_theme; ALTER TABLE settings DROP COLUMN ui_accent; ALTER TABLE settings DROP COLUMN ui_density; DROP INDEX events_chronological_presence; ALTER TABLE people DROP COLUMN legacy_access; ALTER TABLE settings DROP COLUMN logo_watermark_size; ALTER TABLE settings DROP COLUMN credential_color; ALTER TABLE settings DROP COLUMN credential_watermark_size; ALTER TABLE settings DROP COLUMN quick_session_product_id; ALTER TABLE settings DROP COLUMN quick_session_payment_method;
     INSERT INTO settings(id,owner,name,timezone) VALUES(1,'admin','Gym','America/La_Paz');
     INSERT INTO people(id,name,document,kind,status,created_at) VALUES('old','Anterior','OLD','member','active',1)`);
   db.close();

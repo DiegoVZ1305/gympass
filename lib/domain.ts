@@ -1,3 +1,5 @@
+import type { PaymentMethod } from './pos-types.ts';
+import type { QuickSession } from './quick-session.ts';
 export type Role = 'admin' | 'operator' | 'viewer';
 export const generalAccessId = 'general';
 export type Person = {
@@ -293,6 +295,11 @@ export type Settings = {
   brand_color: string;
   auto_close_hours: number;
   closing_time?: string | null;
+  /** Producto elegido para la venta rápida de sesión; null mantiene el botón oculto. */
+  quick_session_product_id?: string | null;
+  quick_session_payment_method?: PaymentMethod;
+  /** Se resuelve solo mientras el producto siga activo: es lo que cobra el botón de Inicio. */
+  quick_session?: QuickSession | null;
 };
 export type Bootstrap = {
   replica?: { linked: boolean };

@@ -1,6 +1,6 @@
 # Política de entregas
 
-La entrega 5.5.4 publica la corrección de persistencia del modo local en la web, Android y Windows. Incluye APK con código 5540, instalador y portable Windows; la prueba física de Android queda pendiente cuando haya un emulador o teléfono conectado.
+La entrega 5.7.0 publica la web, Android y Windows con la misma versión. Incluye APK con código 5700 e instalador Windows; el portable no se publica. La prueba física de Android queda pendiente cuando haya un emulador o teléfono conectado.
 
 ## Web reproducible
 
@@ -51,7 +51,7 @@ Los cambios de 5.1.1 a 5.2.0 están en `client-releases/5.2.0-native.patch`. Inc
 
 Android se compila con `mobile/scripts/build-android.ps1`, reutilizando la firma existente. Antes de publicar, ejecuta `node scripts/check-android-start.mjs RUTA_AL_APK emulator-5554`: instala únicamente en emulador y comprueba dos arranques en frío. Verifica que el certificado coincida con la versión anterior.
 
-Windows se prepara con `npm run dist:desktop` desde el proyecto local. Comprueba el arranque del ejecutable generado y conserva la política de firma existente. Publica APK, instalador, portable y un archivo SHA-256 en la misma entrega. No sustituyas silenciosamente un archivo ya publicado por otro con el mismo nombre.
+Windows se prepara con `npm run dist:desktop` desde el proyecto local. Comprueba el arranque del ejecutable generado y conserva la política de firma existente. Las entregas actuales publican el APK, el instalador Windows y un archivo SHA-256 en la misma entrega; el portable queda fuera. No sustituyas silenciosamente un archivo ya publicado por otro con el mismo nombre.
 
 Los cambios nativos de 5.2.0 a 5.2.1 están en `client-releases/5.2.1-native.patch`, incluidas las restricciones de respaldos y sus pruebas. Se aplica después de los parches anteriores.
 

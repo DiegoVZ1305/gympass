@@ -214,6 +214,7 @@ export default function CloudSync({ platform = false, initial = false }: { platf
                   if (result.gyms) {
                     if (!result.gyms.length) throw Error('Esta cuenta no administra gimnasios activos.');
                     setGyms(result.gyms);
+                    if (result.gyms.length > 1) setError('Elige tu gimnasio y presiona Entrar nuevamente.');
                   } else if (result.linked) location.reload();
                 }}
               >
@@ -252,14 +253,12 @@ export default function CloudSync({ platform = false, initial = false }: { platf
                     </select>
                   </Field>
                 )}
-                {!initial && (
-                  <Field
-                    label="Si esta base tiene datos, escribe REEMPLAZAR"
-                    hint="Se guardará una copia local antes de descargar el gimnasio central."
-                  >
-                    <input name="confirm" autoComplete="off" />
-                  </Field>
-                )}
+                <Field
+                  label="Si esta base tiene datos, escribe REEMPLAZAR"
+                  hint="Se guardará una copia local antes de descargar el gimnasio central. Si está vacía, puedes dejarlo en blanco."
+                >
+                  <input name="confirm" autoComplete="off" />
+                </Field>
               </Form>
             )}
           </>

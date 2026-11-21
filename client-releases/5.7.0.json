@@ -1,0 +1,27 @@
+{
+  "version": "5.7.0",
+  "published": true,
+  "build_method": "local-windows-and-android",
+  "android": {
+    "package": "local.gympass.controlacceso.mobile",
+    "version_code": 5700,
+    "certificate_sha256": "a6735a9d424cb835fac4e5ca05f08df8cd9bd9007bdb8cf32f4fa42492187ded",
+    "smoke_passed": false,
+    "smoke_note": "No había un emulador o dispositivo ADB conectado durante la compilación.",
+    "management_startup_passed": false,
+    "page_size": 16384
+  },
+  "windows": {
+    "package_smoke_passed": false,
+    "setup_version_verified": true,
+    "code_signed": false,
+    "electron_version": "45.0.0",
+    "architecture": "x64",
+    "minimum_os": "Windows 10"
+  },
+  "files": {
+    "GymPASS-Android-5.7.0.apk": { "sha256": "bb8488e86a0b80e93b9494342b8c96f4be526dfdd4f398003e7283460c3e2ed1", "bytes": 66871701 },
+    "GymPASS-Setup-5.7.0.exe": { "sha256": "65d992a319be17fcf05c5a3b36348bba4303ea272b70dd1d32fc44e892525f3a", "bytes": 128022267 }
+  },
+  "release_url": "https://github.com/DiegoVZ1305/gympass/releases/tag/v5.7.0"
+}

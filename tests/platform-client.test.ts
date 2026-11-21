@@ -437,6 +437,7 @@ for (const section of ['members', 'network', 'system', 'password']) {
       './SystemSettings': { default: 'LocalSystem' },
       './RecoveryKey': { default: 'LocalRecovery' },
       './PlatformMembers': { default: 'PlatformMembers' },
+      './QuickSession': { default: 'QuickSession' },
       './PlatformAnnouncements': { default: 'PlatformAnnouncements' },
       './PlatformBackups': { default: 'PlatformBackups' },
     });

@@ -196,7 +196,7 @@ export class Service {
     }
     const installation = await this.one('SELECT owner FROM settings WHERE id=1');
     const [settings, zones, schedules, events, presence] = await Promise.all([
-      this.one('SELECT name,timezone,logo_path,logo_watermark_size,credential_color,credential_watermark_size,brand_color,auto_close_hours,closing_time,ui_theme,ui_accent,ui_density FROM settings WHERE id=1'),
+      this.one('SELECT name,timezone,logo_path,logo_watermark_size,credential_color,credential_watermark_size,brand_color,auto_close_hours,closing_time,ui_theme,ui_accent,ui_density,quick_session_product_id,quick_session_payment_method FROM settings WHERE id=1'),
       this.all(
         `SELECT z.*, (SELECT COUNT(*) FROM (${presenceSql}) p WHERE p.zone_id=z.id) inside FROM zones z ORDER BY z.name`,
       ),
@@ -207,6 +207,21 @@ export class Service {
       this.one(`SELECT COUNT(*) total FROM (${presenceSql})`),
     ]);
     const today = localParts(new Date(), settings!.timezone).date;
+    // La venta rápida solo se ofrece mientras su producto siga en el catálogo activo.
+    const quickProduct = settings!.quick_session_product_id
+      ? await this.one(
+          'SELECT id,name,price_cents FROM pos_products WHERE id=? AND active=1',
+          settings!.quick_session_product_id,
+        )
+      : null;
+    settings!.quick_session = quickProduct
+      ? {
+          product_id: quickProduct.id,
+          name: quickProduct.name,
+          price_cents: quickProduct.price_cents,
+          payment_method: settings!.quick_session_payment_method || 'cash',
+        }
+      : null;
     const activePeople = await this.one(
       `SELECT COUNT(*) total FROM ${effectivePeopleSql(today)} WHERE status='active' AND (expires IS NULL OR expires>=?)`,
       today,
@@ -2091,6 +2106,9 @@ export class Service {
           .optional(),
         /** Lado de la marca de agua de la credencial, como porcentaje del ancho de la tarjeta. */
         credential_watermark_size: z.number().int().min(10).max(100).optional(),
+        /** Producto que cobra el botón de venta rápida de sesión; null lo quita de Inicio. */
+        quick_session_product_id: z.string().trim().min(1).max(64).nullable().optional(),
+        quick_session_payment_method: z.enum(['cash', 'transfer', 'card']).optional(),
       })
       .refine((value) => Object.values(value).some((field) => field !== undefined), 'Envía al menos un ajuste.')
       .parse(body);
@@ -2100,6 +2118,13 @@ export class Service {
       } catch {
         throw new ApiError(400, 'Zona horaria inválida.');
       }
+    }
+    if (p.quick_session_product_id) {
+      const product = await this.one(
+        'SELECT id FROM pos_products WHERE id=? AND active=1',
+        p.quick_session_product_id,
+      );
+      if (!product) throw new ApiError(400, 'Elige un producto activo del catálogo para vender la sesión.');
     }
     await this.db.batch([
       ...(p.ui_theme !== undefined ? [this.stmt('UPDATE settings SET ui_theme=? WHERE id=1', p.ui_theme)] : []),
@@ -2124,6 +2149,22 @@ export class Service {
         : []),
       ...(p.closing_time !== undefined
         ? [this.stmt('UPDATE settings SET closing_time=? WHERE id=1', p.closing_time)]
+        : []),
+      ...(p.quick_session_product_id !== undefined
+        ? [
+            this.stmt(
+              'UPDATE settings SET quick_session_product_id=? WHERE id=1',
+              p.quick_session_product_id ?? null,
+            ),
+          ]
+        : []),
+      ...(p.quick_session_payment_method !== undefined
+        ? [
+            this.stmt(
+              'UPDATE settings SET quick_session_payment_method=? WHERE id=1',
+              p.quick_session_payment_method,
+            ),
+          ]
         : []),
       ...(p.capacity !== undefined
         ? [this.stmt('UPDATE zones SET capacity=? WHERE id=?', p.capacity, generalAccessId)]

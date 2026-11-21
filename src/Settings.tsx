@@ -6,6 +6,7 @@ import {
   KeyRound,
   Palette,
   ScanLine,
+  Ticket,
   Users,
   Volume2,
   Wifi,
@@ -25,13 +26,15 @@ import Network from './Network';
 import SystemSettings from './SystemSettings';
 import RecoveryKey from './RecoveryKey';
 import PlatformMembers from './PlatformMembers';
+import QuickSession from './QuickSession';
 import CloudSync from './CloudSync';
 import ConnectionSettings from './ConnectionSettings';
 import './styles/app-downloads.css';
 
 type Props = ResourceProps & { notify: Notify; members: Member[]; devices: Device[]; audit: AuditEntry[] };
 type TaskId =
-  'organization' | 'appearance' | 'sounds' | 'password' | 'network' | 'members' | 'devices' | 'audit' | 'system';
+  'organization' | 'quick-session' | 'appearance' | 'sounds' | 'password' | 'network' | 'members' | 'devices' | 'audit'
+  | 'system';
 type TaskGroup = 'organization' | 'account' | 'equipment';
 type ClosingMode = 'off' | 'hours' | 'daily';
 type Task = {
@@ -73,6 +76,16 @@ export default function Settings({ data, admin, saved, notify, members, devices,
       description: 'Nombre, hora local y cierre de visitas olvidadas.',
       group: 'organization',
       icon: Building2,
+    },
+    {
+      id: 'quick-session',
+      label: 'Vender sesión',
+      description: data.settings.quick_session
+        ? `Inicio cobra «${data.settings.quick_session.name}» con un solo botón, sin elegir socio.`
+        : 'Un botón en Inicio para cobrar una sesión suelta con un solo toque, sin elegir socio.',
+      group: 'organization',
+      icon: Ticket,
+      adminOnly: true,
     },
     {
       id: 'members',
@@ -349,6 +362,7 @@ export default function Settings({ data, admin, saved, notify, members, devices,
                   </div>
                 </dl>
               ))}
+            {admin && active.id === 'quick-session' && <QuickSession settings={data.settings} saved={saved} />}
             {active.id === 'appearance' && (
               <>
                 <Appearance />

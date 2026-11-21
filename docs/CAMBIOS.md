@@ -1,5 +1,14 @@
 # Cambios
 
+## Sin publicar
+
+- Venta de sesión con un botón en Inicio: **Configuración → Vender sesión** elige el producto del catálogo que se cobra y cómo se paga. Cada toque registra una venta sin elegir socio y suma a la caja y a los informes. El botón solo aparece mientras ese producto siga activo y para cuentas que pueden cobrar.
+- La migración 029 añade la elección a la configuración del gimnasio, sin activar nada en los gimnasios que ya operan. Las copias sincronizadas anteriores reciben las columnas nuevas al actualizarse.
+
+# 5.7.0
+
+- Web, Android y Windows actualizados a 5.7.0. Android usa código 5700; se publican APK e instalador Windows, sin portable.
+
 # 5.5.4
 
 - La conexión de escritorio conserva el modo local al reiniciar y la interfaz incluida en Android y Windows transmite esa elección explícitamente.

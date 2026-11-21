@@ -159,7 +159,7 @@ if (mode === "prepare") {
   if (mode === "upload") {
     const paths = [
       ...(windowsOnly ? [] : [apk]),
-      ...["Setup", "Portable"].map((kind) =>
+      ...["Setup"].map((kind) =>
         join(work, "dist-escritorio", `GymPASS-${kind}-${version}.exe`),
       ),
     ];

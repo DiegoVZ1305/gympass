@@ -70,6 +70,14 @@ Un lector USB debe funcionar como teclado y terminar cada lectura con Enter. Un 
 
 El cierre automático se configura con la zona horaria del gimnasio. Las salidas recuperadas se identifican como estimadas. Los informes de accesos y horas permanecen operativos.
 
+## Venta de sesión con un botón
+
+En **Caja y planes → Productos**, crea el producto de la sesión con su precio y sin control de existencias. Después, en **Configuración → Vender sesión**, activa el botón, elige ese producto e indica cómo se cobra. Solo un administrador configura esta opción.
+
+Inicio muestra entonces **Vender sesión** con el precio. Cada toque registra una venta sin socio, con la forma de pago elegida, y suma a la caja del día y a los informes de productos. No pide confirmación: un cobro equivocado se corrige anulando la venta en **Caja y planes → Ventas hechas**. El botón no aparece para las cuentas de consulta ni en una sesión de soporte de solo lectura.
+
+La sesión se cobra como producto porque un plan necesita un socio. Si el producto elegido se desactiva o cambia de precio, el botón desaparece o se actualiza con el catálogo; la migración 029 guarda la elección y las copias de Android y Windows la reciben al sincronizar.
+
 ## Costos y ganancias de productos
 
 En **Caja y planes → Productos**, registra el costo de compra por unidad y el precio de venta en BOB. El formulario muestra su diferencia como ganancia bruta por unidad y avisa si vendes por debajo del costo. El campo código/SKU ya no aparece; los códigos anteriores se conservan internamente.

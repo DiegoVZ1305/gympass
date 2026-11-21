@@ -339,7 +339,7 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
           <div key={route}>
           <Suspense fallback={<Skeleton rows={4} label="Abriendo pantalla" />}>
             {active === 'dashboard' ? (
-              <Dashboard data={data} />
+              <Dashboard data={data} reload={reload} notify={notify} />
             ) : active === 'people' ? (
               <People data={data} reload={reload} notify={notify} />
             ) : active === 'pos' ? (

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HardDrive, Server } from 'lucide-react';
+import { HardDrive, Server, ShieldCheck } from 'lucide-react';
 import { Field, Form } from './ui';
 import { connectionDestination, connectionMode } from './connection-mode';
 import { api } from './api';
@@ -7,8 +7,8 @@ import { api } from './api';
 export default function ConnectionSettings({ platform }: { platform: boolean }) {
   const desktop = /GymPASSConnection\//.test(navigator.userAgent);
   const current = desktop ? connectionMode(navigator.userAgent, location.hostname) : platform ? 'remote' : 'local';
-  const savedWork = /GymPASSWork\/(local|server)\b/.exec(navigator.userAgent)?.[1];
-  const [mode, setMode] = useState<'local' | 'remote'>(savedWork === 'local' || current === 'local' ? 'local' : 'remote');
+  const savedWork = /GymPASSWork\/(local|server|isolated)\b/.exec(navigator.userAgent)?.[1] as 'local' | 'server' | 'isolated' | undefined;
+  const [mode, setMode] = useState<'local' | 'isolated' | 'remote'>(savedWork === 'isolated' ? 'isolated' : savedWork === 'local' || current === 'local' ? 'local' : 'remote');
   const nativeServer = /GymPASSServer\/([^\s]+)/.exec(navigator.userAgent)?.[1];
   const [server, setServer] = useState(
     nativeServer ? decodeURIComponent(nativeServer) : current === 'remote' ? location.origin : 'https://gympass.site',
@@ -21,13 +21,23 @@ export default function ConnectionSettings({ platform }: { platform: boolean }) 
       <p className="helper">
         Conexión actual:{' '}
         <strong>
-          {current === 'local' ? 'Base local anterior' : current === 'replica' ? savedWork === 'local' ? 'Copia local sincronizada' : 'Servidor con copia automática' : 'Servidor'}
+          {current === 'local' ? 'Base local anterior' : current === 'replica' ? savedWork === 'isolated' ? 'Local independiente' : savedWork === 'local' ? 'Copia local sincronizada' : 'Servidor con copia automática' : 'Servidor'}
         </strong>
         .
       </p>
       <Form
         label={desktop ? 'Guardar conexión y reiniciar' : 'Abrir conexión'}
-        onSubmit={async () => {
+        onSubmit={async (form) => {
+          let authorization: { token: string; server: string } | undefined;
+          if (desktop) {
+            const credentials = {
+              email: String(form.get('connection_superadmin_email') || '').trim(),
+              password: String(form.get('connection_superadmin_password') || ''),
+            };
+            authorization = current === 'remote'
+              ? { token: (await api<{ token: string }>('platform/connection-authorize', 'POST', credentials)).token, server: location.origin }
+              : await api<{ token: string; server: string }>('cloud-sync/authorize-connection', 'POST', { ...credentials, server });
+          }
           if (desktop && current === 'replica') {
             const status = await api<{ conflict?: string; revoked?: boolean; pending: number; error?: string }>('cloud-sync/run', 'POST');
             if (status.conflict || status.revoked) throw Error(status.conflict || 'Vuelve a vincular esta copia con tu cuenta antes de cambiar la conexión.');
@@ -39,7 +49,9 @@ export default function ConnectionSettings({ platform }: { platform: boolean }) 
               server,
               local,
               desktop,
-              mode === 'local' ? 'local' : 'server',
+              mode === 'isolated' ? 'isolated' : mode === 'local' ? 'local' : 'server',
+              authorization?.token,
+              authorization?.server,
             ),
           );
         }}
@@ -60,6 +72,14 @@ export default function ConnectionSettings({ platform }: { platform: boolean }) 
               <small>Conserva los datos del servidor y permite trabajar sin Internet. Los cambios se envían al reconectar.</small>
             </span>
           </label>
+          {desktop && <label className="connection-option">
+            <input type="radio" name="mode" value="isolated" checked={mode === 'isolated'} onChange={() => setMode('isolated')} />
+            <ShieldCheck size={22} aria-hidden="true" />
+            <span>
+              <strong>Local independiente</strong>
+              <small>Descarga la última copia y guarda los cambios solo en este dispositivo. No consulta ni sube nada al servidor.</small>
+            </span>
+          </label>}
           <label className="connection-option">
             <input
               type="radio"
@@ -75,7 +95,15 @@ export default function ConnectionSettings({ platform }: { platform: boolean }) 
             </span>
           </label>
         </fieldset>
-        {mode === 'remote' ? (
+        {desktop && <>
+          <Field label="Correo del superadmin">
+            <input name="connection_superadmin_email" type="email" autoComplete="username" required />
+          </Field>
+          <Field label="Contraseña del superadmin" hint="Solo el superadmin puede cambiar el modo de conexión.">
+            <input name="connection_superadmin_password" type="password" autoComplete="current-password" required />
+          </Field>
+        </>}
+        {mode === 'remote' || mode === 'isolated' ? (
           <>
             <Field label="Dirección del servidor">
               <input
@@ -87,7 +115,7 @@ export default function ConnectionSettings({ platform }: { platform: boolean }) 
                 autoComplete="url"
               />
             </Field>
-            {desktop && <p className="helper">La copia local está incluida y se mantiene actualizada automáticamente.</p>}
+            {desktop && <p className="helper">{mode === 'isolated' ? 'Esta dirección queda guardada para cuando elijas volver a conectar al servidor.' : 'La copia local está incluida y se mantiene actualizada automáticamente.'}</p>}
           </>
         ) : (
           !desktop && (
@@ -107,7 +135,9 @@ export default function ConnectionSettings({ platform }: { platform: boolean }) 
         )}
         <p className="helper">
           {desktop
-            ? 'Los dos modos utilizan la misma copia del gimnasio. En el primer acceso, inicia sesión con tu cuenta administradora del servidor: los datos se descargarán antes de entrar. La base independiente de versiones anteriores se conserva aparte.'
+            ? mode === 'isolated'
+              ? 'Antes de activar este modo se actualiza la copia local. Después, todas las altas, cobros y cambios quedan únicamente en este dispositivo; para sincronizar, vuelve a elegir Servidor y copia automática.'
+              : 'Los modos utilizan la misma copia del gimnasio. En el primer acceso, inicia sesión con tu cuenta administradora del servidor: los datos se descargarán antes de entrar. La base independiente de versiones anteriores se conserva aparte.'
             : 'Esta página trabaja con el servidor. Para usar su copia local, abre GymPASS para Windows en esta computadora e inicia sesión allí una vez con Internet. Después puedes abrir esa misma copia desde este navegador.'}
         </p>
       </Form>

@@ -9,9 +9,11 @@ test('la guía inicial exige cobrar un plan antes de entregar el QR y registrar 
   const { default: Dashboard } = h.load('../src/Dashboard.tsx', {
     'lucide-react': componentStubs,
     './ui': { PageHeader: 'PageHeader', EventTable: 'EventTable' },
+    './api': { api: async () => ({}) },
+    './browser': { newRequestId: () => 'request' },
     './GymPresence': { default: 'GymPresence' },
   });
-  const tree = h.render(() => Dashboard({ data: { user: { role: 'admin' }, settings: { timezone: 'America/La_Paz' }, stats: { activePeople: 0 }, zones: [], events: [] } }));
+  const tree = h.render(() => Dashboard({ data: { user: { role: 'admin' }, settings: { timezone: 'America/La_Paz' }, stats: { activePeople: 0 }, zones: [], events: [] }, reload: async () => {}, notify: () => {} }));
   const text = elementText(tree);
   assert.match(text, /Empieza en 4 pasos/);
   assert.ok(text.indexOf('Crea y cobra su plan') < text.indexOf('Entrégale su credencial QR'));
@@ -44,6 +46,6 @@ test('la entrega conserva exactamente los recursos actuales y anteriores con sus
     assert.match(native.files[filename].sha256, /^[a-f\d]{64}$/);
     assert.ok(native.files[filename].bytes > 0);
   }
-  // La versión portable se sigue publicando, pero el inicio de sesión solo ofrece el instalador.
+  // La página y la entrega solo ofrecen el APK Android y el instalador Windows.
   assert.ok(!downloads.includes('GymPASS-Portable-'));
 });

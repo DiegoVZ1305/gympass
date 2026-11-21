@@ -1,4 +1,5 @@
 export type ConnectionMode = 'local' | 'remote' | 'replica';
+export type ReplicaWorkMode = 'local' | 'server' | 'isolated';
 
 export function connectionMode(userAgent: string, hostname: string): ConnectionMode {
   const native = /GymPASSConnection\/(local|remote|replica)\b/.exec(userAgent);
@@ -30,7 +31,7 @@ export function localOrigin(value: string): string {
   return url.origin;
 }
 
-export function connectionDestination(mode: ConnectionMode, server: string, local: string, desktop: boolean, work?: 'local' | 'server'): string {
+export function connectionDestination(mode: ConnectionMode, server: string, local: string, desktop: boolean, work?: ReplicaWorkMode, authorization?: string, authorizationServer?: string): string {
   if (desktop) {
     const nativeMode = mode === 'local' ? 'replica' : mode;
     const query = new URLSearchParams({ mode: nativeMode });
@@ -38,6 +39,8 @@ export function connectionDestination(mode: ConnectionMode, server: string, loca
     // A replica has two possible working modes. Always send it explicitly so
     // the desktop client cannot fall back to the server after restarting.
     if (nativeMode === 'replica') query.set('work', work || (mode === 'local' ? 'local' : 'server'));
+    if (authorization) query.set('authorization', authorization);
+    if (authorizationServer) query.set('authorization_server', serverOrigin(authorizationServer));
     return 'gympass-connection://apply/?' + query;
   }
   return (mode === 'local' ? localOrigin(local) : serverOrigin(server)) + '/';

@@ -1,12 +1,75 @@
-import { CheckCircle2, ScanLine, Users } from 'lucide-react';
+import { useState } from 'react';
+import { CheckCircle2, LoaderCircle, ScanLine, Ticket, Users } from 'lucide-react';
 import type { Bootstrap } from '../lib/domain';
-import { EventTable, PageHeader } from './ui';
+import type { PosSaleDetail } from '../lib/pos-types';
+import { api, HttpError, NetworkError } from './api';
+import { newRequestId } from './browser';
+import { EventTable, PageHeader, type Notify } from './ui';
 import GymPresence from './GymPresence';
 
-export default function Dashboard({ data }: { data: Bootstrap }) {
+const money = (cents: number) =>
+  new Intl.NumberFormat('es-BO', { style: 'currency', currency: 'BOB' }).format(cents / 100);
+
+/** Cobra una sesión suelta con un solo toque: sin socio, sin catálogo y sin pantalla intermedia. */
+export function SellSession({
+  data,
+  reload,
+  notify,
+}: {
+  data: Bootstrap;
+  reload: (topics?: string[]) => Promise<void>;
+  notify: Notify;
+}) {
+  const quick = data.settings.quick_session!;
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="btn secondary"
+      disabled={busy}
+      // Mientras el cobro viaja, la misma guarda de Caja impide cambiar de pantalla.
+      data-payment-pending={busy ? 'true' : undefined}
+      onClick={async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+          const sale = await api<PosSaleDetail>('pos/checkout', 'POST', {
+            request_id: newRequestId(),
+            payment_method: quick.payment_method,
+            expected_total_cents: quick.price_cents,
+            lines: [{ kind: 'product', id: quick.product_id, quantity: 1 }],
+          });
+          notify(`Sesión cobrada · ${money(sale.total_cents)}. Queda en Caja y en los informes.`);
+          await reload(['pos']).catch(() => {});
+        } catch (reason) {
+          // Una respuesta perdida pudo registrar el cobro: conviene mirarlo antes de repetirlo.
+          const uncertain =
+            reason instanceof NetworkError || (reason instanceof HttpError && reason.status >= 500);
+          const message = reason instanceof Error ? reason.message : 'No se pudo cobrar la sesión.';
+          notify(uncertain ? message + ' Revisa «Ventas hechas» antes de cobrar otra vez.' : message, true);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? <LoaderCircle size={18} className="spin" /> : <Ticket size={18} />}
+      {busy ? 'Cobrando…' : `Vender sesión · ${money(quick.price_cents)}`}
+    </button>
+  );
+}
+
+export default function Dashboard({
+  data,
+  reload,
+  notify,
+}: {
+  data: Bootstrap;
+  reload: (topics?: string[]) => Promise<void>;
+  notify: Notify;
+}) {
   const capacityAlerts = data.zones.filter(
     (zone) => zone.active && zone.capacity > 0 && zone.inside >= zone.capacity * 0.9,
   );
+  const canSell = data.user.role !== 'viewer' && !data.platform?.read_only;
   return (
     <>
       <PageHeader
@@ -14,10 +77,15 @@ export default function Dashboard({ data }: { data: Bootstrap }) {
         description="Mira quién está entrenando ahora y registra cuando alguien llega o se va."
         primaryAction={
           data.user.role !== 'viewer' && (
-            <a className="btn primary" href="#access">
-              <ScanLine size={18} />
-              Registrar entrada o salida
-            </a>
+            <>
+              <a className="btn primary" href="#access">
+                <ScanLine size={18} />
+                Registrar entrada o salida
+              </a>
+              {canSell && !!data.settings.quick_session && (
+                <SellSession data={data} reload={reload} notify={notify} />
+              )}
+            </>
           )
         }
       />
