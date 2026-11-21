@@ -36,7 +36,7 @@ test('la entrega conserva exactamente los recursos actuales y anteriores con sus
   for (const name of readdirSync(new URL('../dist/assets/', import.meta.url))) assert.ok(retained.has('assets/' + name.replace(/\.(br|gz)$/, '')), name);
   const downloads = readFileSync(new URL('../src/AppDownloads.tsx', import.meta.url), 'utf8');
   // Server-only patches keep the last verified native installers; never point at nonexistent binaries.
-  const nativeVersion = /\/download\/v(\d+\.\d+\.\d+)\//.exec(downloads)?.[1];
+  const nativeVersion = /\/instaladores\/(\d+\.\d+\.\d+)\//.exec(downloads)?.[1];
   assert.ok(nativeVersion, 'Las descargas deben apuntar a una entrega nativa identificable.');
   const native = JSON.parse(readFileSync(new URL(`../client-releases/${nativeVersion}.json`, import.meta.url), 'utf8'));
   assert.equal(native.published, true);

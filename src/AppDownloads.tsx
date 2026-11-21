@@ -1,8 +1,8 @@
 ﻿import { Download, Monitor, Smartphone } from 'lucide-react';
 import './styles/app-downloads.css';
 
-const release = 'https://github.com/DiegoVZ1305/gympass/releases/download/v5.7.0/';
-const androidApk = release + 'GymPASS-Android-5.7.0.apk';
+const installerBase = 'https://github.com/DiegoVZ1305/gympass/raw/refs/heads/main/instaladores/5.7.0/';
+const androidApk = installerBase + 'GymPASS-Android-5.7.0.apk';
 
 export default function AppDownloads() {
   if (
@@ -28,7 +28,7 @@ export default function AppDownloads() {
         </a>
         <a
           className="app-download"
-          href={release + 'GymPASS-Setup-5.7.0.exe'}
+          href={installerBase + 'GymPASS-Setup-5.7.0.exe'}
           target="_blank"
           rel="noopener noreferrer"
         >

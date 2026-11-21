@@ -23,5 +23,5 @@
     "GymPASS-Android-5.7.0.apk": { "sha256": "bb8488e86a0b80e93b9494342b8c96f4be526dfdd4f398003e7283460c3e2ed1", "bytes": 66871701 },
     "GymPASS-Setup-5.7.0.exe": { "sha256": "65d992a319be17fcf05c5a3b36348bba4303ea272b70dd1d32fc44e892525f3a", "bytes": 128022267 }
   },
-  "release_url": "https://github.com/DiegoVZ1305/gympass/releases/tag/v5.7.0"
+  "release_url": "https://github.com/DiegoVZ1305/gympass/tree/main/instaladores/5.7.0"
 }
