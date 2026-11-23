@@ -1422,3 +1422,16 @@ textarea {
   color: var(--warn);
   margin-top: var(--s2);
 }
+/* Cuántos socios hay ahora mismo, junto al título de la página. */
+.people-total {
+  display: inline-flex;
+  align-items: center;
+  margin-top: var(--s2);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}

@@ -14,7 +14,6 @@ import { appearanceSettings } from '../lib/gym-appearance';
 import { applyBrand } from './branding';
 import {
   accessQueueIdentity,
-  flushAccessQueue,
   setAccessQueueIdentity,
   startOfflineQueue,
   useAccessQueue,
@@ -201,12 +200,8 @@ export default function App({ onLogout }: { onLogout?: () => void } = {}) {
       }
       return reload(topics);
     });
-    const stop = startOfflineQueue();
-    void flushAccessQueue()
-      .then((result) => {
-        if (result.sent) void reload().catch(() => {});
-      })
-      .catch(() => {});
+    // La cola reintenta sola; cuando el servidor acepta lo pendiente, la pantalla se actualiza sin pedirlo.
+    const stop = startOfflineQueue(() => void reload().catch(() => {}));
     return () => {
       stopLive();
       stop();

@@ -1,4 +1,4 @@
-# GymPASS 5.7.0
+# GymPASS 5.8.0
 
 Plataforma para socios, planes, caja y control de acceso. La web, Android y Windows se publican con la misma versión.
 
@@ -34,7 +34,7 @@ No inicialices una plataforma que ya contiene datos. Antes de actualizar, conser
 
 ## Publicación
 
-Los cambios de `main` se verifican antes de desplegarse cuando `NAMECHEAP_DEPLOY_ENABLED=true`. Los secretos de SSH y las variables de cPanel se describen en [Operación](docs/OPERACION.md). Android y Windows 5.7.0 se descargan directamente desde la carpeta de [instaladores del repositorio](https://github.com/DiegoVZ1305/gympass/tree/main/instaladores/5.7.0).
+Los cambios de `main` se verifican antes de desplegarse cuando `NAMECHEAP_DEPLOY_ENABLED=true`. Los secretos de SSH y las variables de cPanel se describen en [Operación](docs/OPERACION.md). Android y Windows 5.8.0 se descargan directamente desde la carpeta de [instaladores del repositorio](https://github.com/DiegoVZ1305/gympass/tree/main/instaladores/5.8.0).
 
 Se conservan los recursos web de la versión actual y de la inmediatamente anterior para las sesiones abiertas. Las versiones más antiguas se retiran del despliegue público; el instalador actual permanece como archivo directo del repositorio. Consulta [la política de entregas](docs/ENTREGAS.md).
 

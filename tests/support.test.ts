@@ -14,7 +14,7 @@ test('soporte abre ambos chats con los números correctos y la versión, y permi
   assert.throws(() => findElement(tree, e => e.type === 'Modal'));
   button().props.onClick(); tree = await h.settle();
   assert.equal(button().props['aria-expanded'], true);
-  for (const [name, phone] of [['Diego Vargas', '59162629717'], ['Mateo Bazoberry', '59176738942']]) {
+  for (const [name, phone] of [['Técnico 1', '59162629717'], ['Técnico 2', '59176738942']]) {
     const contact = findElement(tree, e => e.type === 'a' && e.props['aria-label'] === `Escribir a ${name} por WhatsApp`);
     const url = new URL(contact.props.href);
     assert.equal(url.origin, 'https://wa.me'); assert.equal(url.pathname, '/' + phone);

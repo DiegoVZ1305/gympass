@@ -138,16 +138,71 @@ export function reviewAccessQueue() {
 export function setAccessReview(requestId: string, held: boolean) {
   return queue.setReview(requestId, held);
 }
-export function startOfflineQueue() {
+/** Primer reintento tras una caída, y tope al que llega si el servidor sigue sin responder. */
+const firstRetry = 3000,
+  maxRetry = 30000,
+  idleCheck = 20000;
+/**
+ * Mantiene viva la reconexión sin que nadie pulse nada: mientras queden movimientos sin enviar
+ * reintenta a los 3 s y va espaciando hasta 30 s, y cualquier señal de que la red volvió
+ * (`online`, foco, pestaña visible) o un movimiento nuevo vuelve al intento inmediato.
+ * `onSent` avisa cuando el servidor por fin aceptó algo, para refrescar lo que se ve en pantalla.
+ */
+export function startOfflineQueue(onSent?: (sent: number) => void) {
   void queue.refresh();
-  const retry = () => void flushAccessQueue().catch(() => {});
-  window.addEventListener('online', retry);
-  const timer = setInterval(() => {
-    if (queue.snapshot().pending && !queue.snapshot().sending && navigator.onLine !== false) retry();
-  }, 20000);
+  let timer: ReturnType<typeof setTimeout> | null = null,
+    delay = firstRetry,
+    pending = queue.snapshot().pending,
+    stopped = false;
+  const schedule = (wait: number) => {
+    if (stopped) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => void attempt(), wait);
+  };
+  const attempt = async () => {
+    if (stopped) return;
+    const state = queue.snapshot();
+    if (!state.pending || state.sending) return schedule(idleCheck);
+    if (navigator.onLine === false) return schedule(maxRetry);
+    let sent = 0;
+    try {
+      sent = (await flushAccessQueue()).sent;
+    } catch {
+      // Un fallo de envío no detiene el ciclo: solo alarga la espera del siguiente intento.
+    }
+    if (stopped) return;
+    if (sent) onSent?.(sent);
+    pending = queue.snapshot().pending;
+    delay = sent || !pending ? firstRetry : Math.min(delay * 2, maxRetry);
+    schedule(pending ? delay : idleCheck);
+  };
+  const soon = () => {
+    delay = firstRetry;
+    schedule(0);
+  };
+  const visible = () => {
+    if (document.visibilityState === 'visible') soon();
+  };
+  // Un movimiento nuevo en la cola significa que el servidor acaba de fallar: reintenta pronto.
+  const unsubscribe = queue.subscribe(() => {
+    const next = queue.snapshot().pending;
+    if (next > pending) {
+      pending = next;
+      delay = firstRetry;
+      schedule(firstRetry);
+    } else pending = next;
+  });
+  window.addEventListener('online', soon);
+  window.addEventListener('focus', soon);
+  document.addEventListener('visibilitychange', visible);
+  schedule(0);
   return () => {
-    window.removeEventListener('online', retry);
-    clearInterval(timer);
+    stopped = true;
+    unsubscribe();
+    window.removeEventListener('online', soon);
+    window.removeEventListener('focus', soon);
+    document.removeEventListener('visibilitychange', visible);
+    if (timer) clearTimeout(timer);
   };
 }
 export function useAccessQueue() {

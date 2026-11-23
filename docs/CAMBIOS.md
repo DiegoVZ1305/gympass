@@ -1,5 +1,15 @@
 # Cambios
 
+# 5.8.0
+
+- Los reportes de **Caja y planes** se desglosan: cada mes, semana, día o año con ventas se abre y muestra cuánto vino de planes, cuánto de productos y con qué se pagó. El mismo desglose va en el CSV y en el documento para imprimir.
+- **Socios** indica cuántos socios hay registrados ahora mismo, al margen del buscador y de los filtros.
+- Un escaneo hecho sin servidor se reenvía solo: la cola reintenta a los pocos segundos, se acelera cuando vuelve la red o la ventana recupera el foco, y la pantalla se actualiza sin pulsar nada.
+- El soporte por WhatsApp lista a Técnico 1 y Técnico 2.
+- Configuración → Conexión ya no muestra «Equipos vinculados»; los cambios en conflicto se revisan en su propio aviso.
+- En el teléfono en vertical, la barra inferior deja cada sección en una sola línea. En Caja y planes, las fechas y los botones de exportación quedan a la misma altura.
+- Web, Android y Windows actualizados a 5.8.0. Android usa código 5800; se publican APK e instalador Windows, sin portable.
+
 ## Sin publicar
 
 - Venta de sesión con un botón en Inicio: **Configuración → Vender sesión** elige el producto del catálogo que se cobra y cómo se paga. Cada toque registra una venta sin elegir socio y suma a la caja y a los informes. El botón solo aparece mientras ese producto siga activo y para cuentas que pueden cobrar.

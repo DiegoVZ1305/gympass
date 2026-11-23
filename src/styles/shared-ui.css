@@ -398,7 +398,15 @@
     padding: 8px 2px;
     color: var(--ink-2);
     background: transparent;
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 1.2;
+  }
+  /* Una sola línea por botón: con cinco secciones no cabe una etiqueta partida. */
+  .mobile-navigation > :is(a, button) > span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .mobile-navigation > [aria-current='page'],
   .mobile-navigation > .active {

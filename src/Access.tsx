@@ -83,6 +83,24 @@ export default function Access({ data, reload, active = true }: { data: Bootstra
       alive.current = false;
     };
   }, []);
+  // Si la lista no se pudo actualizar, se reintenta solo hasta que el servidor responda.
+  useEffect(() => {
+    if (!loadError) return;
+    let cancelled = false;
+    const retry = () =>
+      void reload()
+        .then(() => {
+          if (!cancelled) setLoadError('');
+        })
+        .catch(() => {});
+    const timer = setInterval(retry, 5000);
+    window.addEventListener('online', retry);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener('online', retry);
+    };
+  }, [loadError, reload]);
   async function register(fields: Record<string, unknown>) {
     if (inFlight.current) throw Error('Espera a que termine el registro actual.');
     const body = { ...fields, zone_id: zone, direction: 'auto' },
@@ -119,7 +137,7 @@ export default function Access({ data, reload, active = true }: { data: Bootstra
       }
       void reload().catch(() => {
         if (alive.current)
-          setLoadError('El movimiento se registró, pero no pudimos actualizar la lista. Pulsa Actualizar datos.');
+          setLoadError('El movimiento se registró. La lista se actualizará sola en cuanto vuelva el servidor.');
       });
     } finally {
       inFlight.current = false;
@@ -150,7 +168,7 @@ export default function Access({ data, reload, active = true }: { data: Bootstra
             <small>
               {queue.sending
                 ? 'Enviando a la base de datos…'
-                : 'Se reenviarán al recuperar la conexión con esta misma cuenta. No se duplicarán.'}
+                : 'GymPASS reintenta solo cada pocos segundos y los enviará apenas vuelva la conexión con esta misma cuenta. No se duplicarán.'}
             </small>
           </div>
           <button

@@ -69,12 +69,26 @@ export function reportCsv(report: PosReport) {
       summary.previous.count,
       decimal(summary.previous.total_cents),
     ],
-    ...report.series.map((row) => [
-      'Por ' + periodNames[report.period].toLowerCase(),
-      bucketLabel(report.period, row.bucket),
-      row.count,
-      decimal(row.total_cents),
-    ]),
+    // Cada grupo va con su desglose debajo, igual que en la pantalla.
+    ...report.series.flatMap((row) => {
+      const section = 'Por ' + periodNames[report.period].toLowerCase(),
+        name = bucketLabel(report.period, row.bucket);
+      return [
+        [section, name, row.count, decimal(row.total_cents)],
+        ...(row.count
+          ? [
+              [section, name + ' · planes', row.plans.quantity, decimal(row.plans.total_cents)],
+              [section, name + ' · productos', row.products.quantity, decimal(row.products.total_cents)],
+              ...row.by_method.map((method) => [
+                section,
+                name + ' · ' + methodNames[method.payment_method],
+                method.count,
+                decimal(method.total_cents),
+              ]),
+            ]
+          : []),
+      ];
+    }),
     ...report.plans.map((row) => ['Planes', row.name, row.quantity, decimal(row.total_cents)]),
     ...report.products.map((row) => ['Productos', row.name, row.quantity, decimal(row.total_cents)]),
     ...report.products.flatMap((row) => row.margin ? marginCsv('Costos y ganancias', row.name, row.margin) : []),
@@ -130,8 +144,19 @@ export function reportPrintHtml(report: PosReport, gym: string) {
     ]) + '<p>La ganancia bruta de productos excluye los planes y otros gastos del gimnasio.</p>' : '') +
     table(
       'Evolución',
-      [periodNames[report.period], 'Ventas', 'Ingresos'],
-      report.series.map((row) => [bucketLabel(report.period, row.bucket), row.count, money(row.total_cents)]),
+      [periodNames[report.period], 'Ventas', 'Ingresos', 'Planes', 'Productos', 'Cómo se pagó'],
+      report.series.map((row) => [
+        bucketLabel(report.period, row.bucket),
+        row.count,
+        money(row.total_cents),
+        row.plans.quantity ? `${row.plans.quantity} · ${money(row.plans.total_cents)}` : '—',
+        row.products.quantity ? `${row.products.quantity} · ${money(row.products.total_cents)}` : '—',
+        row.by_method.length
+          ? row.by_method
+              .map((method) => `${methodNames[method.payment_method]}: ${money(method.total_cents)}`)
+              .join(' · ')
+          : '—',
+      ]),
     ) +
     table(
       'Planes más vendidos',

@@ -1,0 +1,2 @@
+d471a96320036a1d740b2a786296dea9e98edc0ffc9754c638e9a509de9df648  GymPASS-Android-5.8.0.apk
+2e0a6f2eb77e9bda2e0649c1c1b1a6fd6935b6d49a9fc08d623498272afed67f  GymPASS-Setup-5.8.0.exe

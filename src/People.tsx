@@ -668,6 +668,8 @@ export default function People({
     [membership, setMembership] = useState<PersonSummary | null>(null);
   const directory = usePeople({ q, kind, state, page }),
     people = directory.rows;
+  // Cuántos socios hay ahora mismo, al margen de la búsqueda y de los filtros de la tabla.
+  const memberTotal = usePeople({ kind: 'member', limit: 1 });
   const viewingDeleted = state === 'deleted';
   async function run(person: PersonSummary, work: () => Promise<void>, done: string) {
     setBusyRow(person.id);
@@ -790,6 +792,13 @@ export default function People({
         <div>
           <h1>Socios</h1>
           <p>Busca a un socio o registra a una persona nueva.</p>
+          <span className="people-total" role="status">
+            {memberTotal.error
+              ? 'No pudimos contar los socios'
+              : memberTotal.busy
+                ? 'Contando socios…'
+                : `${memberTotal.total} ${memberTotal.total === 1 ? 'socio registrado' : 'socios registrados'}`}
+          </span>
         </div>
         {data.user.role === 'admin' && !viewingDeleted && (
           <button className="btn primary" onClick={() => setEdit('new')}>

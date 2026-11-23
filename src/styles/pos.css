@@ -117,9 +117,18 @@
 }
 .pos-catalog-heading .field {
   flex: 1 1 220px;
+  margin-bottom: 0;
+}
+.pos-catalog-heading .field input {
+  min-height: 48px;
 }
 .pos-history-filters .field {
   flex: 1 1 160px;
+  /* Sin el margen inferior del formulario, los campos y los botones terminan a la misma altura. */
+  margin-bottom: 0;
+}
+.pos-history-filters .field :is(input, select) {
+  min-height: 48px;
 }
 .pos-sales-summary {
   display: flex;
@@ -356,6 +365,43 @@
 .pos-report-list small {
   grid-column: 1 / -1;
   color: var(--muted);
+}
+/* El desglose de cada grupo de la evolución. */
+.pos-report-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+.pos-report-toggle:hover {
+  color: var(--brand-base);
+}
+.pos-report-toggle svg {
+  flex: none;
+  color: var(--muted);
+}
+.pos-report-detail > td {
+  background: var(--surface-2);
+}
+.pos-report-detail-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--s4);
+  padding: var(--s2) 0;
+}
+.pos-report-detail-body h3 {
+  margin: 0 0 var(--s2);
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .pos-donut {

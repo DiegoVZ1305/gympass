@@ -7,6 +7,8 @@ const primary = [
   ['people', Users],
   ['pos', ShoppingCart],
 ] as const satisfies readonly (readonly [SectionId, typeof BarChart3])[];
+/** La barra del teléfono es estrecha: aquí la etiqueta va en una palabra para que no se parta en dos líneas. */
+const shortLabels: Partial<Record<SectionId, string>> = { pos: 'Caja' };
 export default function MobileNavigation({
   sections,
   current,
@@ -24,9 +26,14 @@ export default function MobileNavigation({
         const section = sections.find((item) => item.id === id);
         return section
           ? [
-              <a key={id} href={section.href} aria-current={current === id && !more ? 'page' : undefined}>
+              <a
+                key={id}
+                href={section.href}
+                aria-current={current === id && !more ? 'page' : undefined}
+                aria-label={section.label}
+              >
                 <Icon size={22} aria-hidden="true" />
-                <span>{section.label}</span>
+                <span>{shortLabels[id] ?? section.label}</span>
               </a>,
             ]
           : [];

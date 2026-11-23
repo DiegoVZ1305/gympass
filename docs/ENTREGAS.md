@@ -1,6 +1,6 @@
 # Política de entregas
 
-La entrega 5.7.0 publica la web, Android y Windows con la misma versión. Incluye APK con código 5700 e instalador Windows; el portable no se publica. La prueba física de Android queda pendiente cuando haya un emulador o teléfono conectado.
+La entrega 5.8.0 publica la web, Android y Windows con la misma versión. Incluye APK con código 5800 e instalador Windows; el portable no se publica. Se conserva el grafo publicado de 5.7.0 en `web-releases/previous.json`, así que las pestañas abiertas en esa versión siguen cargando sus pantallas diferidas. La prueba física de Android queda pendiente cuando haya un emulador o teléfono conectado.
 
 ## Web reproducible
 

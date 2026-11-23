@@ -20,22 +20,17 @@ type SyncStatus = {
   error?: string;
   revoked?: boolean;
 };
-type Device = { id: string; name: string; kind: string; last_sync_at: number | null; revoked_at: number | null };
 type Conflict = { device_id: string; batch_id: string; name: string; conflict: string; created_at: number };
 export default function CloudSync({ platform = false, initial = false }: { platform?: boolean; initial?: boolean }) {
   const [status, setStatus] = useState<SyncStatus | null>(null),
-    [devices, setDevices] = useState<Device[]>([]),
     [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [error, setError] = useState(''),
     [relink, setRelink] = useState(false),
     [busy, setBusy] = useState(false),
     [gyms, setGyms] = useState<{ id: string; name: string }[]>([]);
   const refresh = async () => {
-    if (platform) {
-      const [d, c] = await Promise.all([api<Device[]>('sync/devices'), api<Conflict[]>('sync/conflicts')]);
-      setDevices(d);
-      setConflicts(c);
-    } else setStatus(await api<SyncStatus>('cloud-sync/status'));
+    if (platform) setConflicts(await api<Conflict[]>('sync/conflicts'));
+    else setStatus(await api<SyncStatus>('cloud-sync/status'));
   };
   useEffect(() => {
     void refresh().catch((cause) => setError(cause.message));
@@ -54,11 +49,12 @@ export default function CloudSync({ platform = false, initial = false }: { platf
       setBusy(false);
     }
   };
+  if (platform && !conflicts.length && !error) return null;
   return (
     <section className={initial ? 'panel cloud-sync sync-initial' : 'panel cloud-sync'}>
       {initial && <ConnectionStatus />}
       {initial && <ThemeToggle />}
-      <h2>{initial ? 'Iniciar sesión en GymPASS' : platform ? 'Equipos vinculados' : 'Sincronización'}</h2>
+      <h2>{initial ? 'Iniciar sesión en GymPASS' : platform ? 'Cambios por revisar' : 'Sincronización'}</h2>
       {initial && (
         <p>
           Entra con la cuenta administradora de tu gimnasio en el servidor. Sus socios, planes, cobros y credenciales se
@@ -72,55 +68,6 @@ export default function CloudSync({ platform = false, initial = false }: { platf
       )}
       {platform ? (
         <>
-          {!devices.length && (
-            <p>
-              Todavía no hay equipos vinculados. La primera vinculación se hace desde la aplicación, con Internet y una
-              cuenta administradora.
-            </p>
-          )}
-          <div className="sync-devices">
-            {devices.map((device) => (
-              <div className="sync-device" key={device.id}>
-                <div>
-                  <h3>{device.name}</h3>
-                  <p>
-                    {device.kind === 'mobile' ? 'Aplicación móvil' : 'Computadora Windows'} ·{' '}
-                    {device.revoked_at ? 'Acceso desactivado' : 'Vinculación activa'}
-                  </p>
-                  <p>
-                    {device.last_sync_at
-                      ? 'Última copia actualizada: ' + stamp(device.last_sync_at)
-                      : 'Todavía no terminó la primera descarga'}
-                  </p>
-                </div>
-                <button
-                  className="btn secondary"
-                  disabled={busy}
-                  onClick={() =>
-                    void run(async () => {
-                      if (device.revoked_at) {
-                        if (
-                          confirm(
-                            '¿Reactivar esta vinculación para que el dispositivo pueda sincronizar sus pendientes?',
-                          )
-                        )
-                          await api('sync/devices/' + device.id, 'POST', { confirm: 'REACTIVAR' });
-                        return;
-                      }
-                      if (
-                        confirm(
-                          '¿Revocar la vinculación de este dispositivo? Se bloqueará al reconectar y, sin conexión, al vencer su autorización.',
-                        )
-                      )
-                        await api('sync/devices/' + device.id, 'DELETE');
-                    })
-                  }
-                >
-                  {device.revoked_at ? 'Permitir acceso de nuevo' : 'Desactivar este equipo'}
-                </button>
-              </div>
-            ))}
-          </div>
           {conflicts.map((conflict) => (
             <div className="sync-conflict" key={conflict.device_id + ':' + conflict.batch_id}>
               <h3>Revisar cambios de {conflict.name}</h3>
@@ -194,8 +141,8 @@ export default function CloudSync({ platform = false, initial = false }: { platf
                   {busy ? 'Sincronizando…' : 'Sincronizar ahora'}
                 </button>
                 <p className="helper">
-                  Para revisar conflictos o revocar equipos, entra con Internet en Configuración → Conexión del gimnasio
-                  en la plataforma. Puedes descargar un respaldo local antes de resolverlos.
+                  Para revisar los cambios en conflicto, entra con Internet en Configuración → Conexión del gimnasio en
+                  la plataforma. Puedes descargar un respaldo local antes de resolverlos.
                 </p>
                 <button className="btn secondary" disabled={busy} onClick={() => setRelink(true)}>
                   Volver a vincular con mi cuenta

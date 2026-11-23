@@ -133,7 +133,7 @@ export default function Settings({ data, admin, saved, notify, members, devices,
     {
       id: 'network',
       label: 'Conexión',
-      description: 'Elige si quieres trabajar de forma local o en el servidor y conecta tus equipos.',
+      description: 'Elige si quieres trabajar de forma local o en el servidor del gimnasio.',
       group: 'equipment',
       icon: Wifi,
     },

@@ -1,5 +1,5 @@
 * text=auto eol=lf
 *.cmd text eol=crlf
 *.patch -whitespace
-/instaladores/5.7.0/GymPASS-Android-5.7.0.apk filter=lfs diff=lfs merge=lfs -text
-/instaladores/5.7.0/GymPASS-Setup-5.7.0.exe filter=lfs diff=lfs merge=lfs -text
+/instaladores/5.8.0/GymPASS-Android-5.8.0.apk filter=lfs diff=lfs merge=lfs -text
+/instaladores/5.8.0/GymPASS-Setup-5.8.0.exe filter=lfs diff=lfs merge=lfs -text

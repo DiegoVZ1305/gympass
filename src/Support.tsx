@@ -5,8 +5,8 @@ import { Modal } from './ui';
 import './styles/support.css';
 
 export const supportContacts = [
-  { name: 'Diego Vargas', phone: '59162629717', display: '+591 62629717' },
-  { name: 'Mateo Bazoberry', phone: '59176738942', display: '+591 76738942' },
+  { name: 'Técnico 1', phone: '59162629717', display: '+591 62629717' },
+  { name: 'Técnico 2', phone: '59176738942', display: '+591 76738942' },
 ] as const;
 
 export function supportWhatsappUrl(phone: string, version = '') {

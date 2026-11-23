@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Download, Printer } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Printer } from 'lucide-react';
 import type { Bootstrap } from '../lib/domain';
-import type { PosReport, PosReportItem, PosReportPeriod } from '../lib/pos-types';
+import type { PosReport, PosReportBucket, PosReportItem, PosReportPeriod } from '../lib/pos-types';
 import { api } from './api';
 import { Donut, SplitBar, foldParts } from './PosCharts';
 import { Field, Skeleton, type Notify } from './ui';
@@ -126,13 +126,69 @@ function Ranking({ title, items, empty, showMargin = false }: { title: string; i
   );
 }
 
+/** Lo que hay detrás de un grupo de la evolución: de dónde salió el dinero y cómo se pagó. */
+export function BucketDetail({ row }: { row: PosReportBucket }) {
+  const parts = [
+    { key: 'plans', label: 'Planes', quantity: row.plans.quantity, cents: row.plans.total_cents },
+    { key: 'products', label: 'Productos', quantity: row.products.quantity, cents: row.products.total_cents },
+  ].filter((part) => part.quantity || part.cents);
+  return (
+    <div className="pos-report-detail-body">
+      <div>
+        <h3>Qué se vendió</h3>
+        {parts.length ? (
+          <ul className="pos-report-list">
+            {parts.map((part) => (
+              <li key={part.key}>
+                <span>{part.label}</span>
+                <strong>{money(part.cents)}</strong>
+                <small>
+                  {part.quantity} {part.quantity === 1 ? 'vendido' : 'vendidos'}
+                </small>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="helper">Sin líneas registradas en este grupo.</p>
+        )}
+      </div>
+      <div>
+        <h3>Cómo se pagó</h3>
+        {row.by_method.length ? (
+          <ul className="pos-report-list">
+            {row.by_method.map((method) => (
+              <li key={method.payment_method}>
+                <span>
+                  <i
+                    className="pos-swatch"
+                    style={{ background: methodColor[method.payment_method] }}
+                    aria-hidden="true"
+                  />
+                  {methodNames[method.payment_method]}
+                </span>
+                <strong>{money(method.total_cents)}</strong>
+                <small>
+                  {method.count} {method.count === 1 ? 'venta' : 'ventas'}
+                </small>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="helper">Sin cobros registrados en este grupo.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function PosReports({ data, notify }: { data: Bootstrap; notify: Notify }) {
   const [period, setPeriod] = useState<PosReportPeriod>('month'),
     [range, setRange] = useState(() => defaultRange('month', data.today)),
     [report, setReport] = useState<PosReport | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(true),
-    [retry, setRetry] = useState(0);
+    [retry, setRetry] = useState(0),
+    [expanded, setExpanded] = useState<string[]>([]);
   useEffect(() => {
     const controller = new AbortController();
     setBusy(true);
@@ -154,6 +210,7 @@ export default function PosReports({ data, notify }: { data: Bootstrap; notify: 
       });
     return () => controller.abort();
   }, [period, range.from, range.to, retry]);
+  useEffect(() => setExpanded([]), [period, range.from, range.to]);
 
   function exportCsv() {
     if (!report) return;
@@ -272,6 +329,12 @@ export default function PosReports({ data, notify }: { data: Bootstrap; notify: 
           {summary.product_margin && <p className="helper">La ganancia bruta de productos excluye los planes y otros gastos del gimnasio.</p>}
           <h2>Ingresos por {periodNames[report.period].toLowerCase()}</h2>
           {summary.count ? <Bars report={report} /> : <p className="helper">No hay ventas pagadas en este rango.</p>}
+          {!!summary.count && (
+            <p className="helper">
+              Abre un {periodNames[report.period].toLowerCase()} con ventas para ver su desglose: planes, productos y
+              métodos de pago.
+            </p>
+          )}
           <div className="table-scroll">
             <table>
               <thead>
@@ -282,13 +345,51 @@ export default function PosReports({ data, notify }: { data: Bootstrap; notify: 
                 </tr>
               </thead>
               <tbody>
-                {report.series.map((row) => (
-                  <tr key={row.bucket}>
-                    <td>{bucketLabel(report.period, row.bucket)}</td>
-                    <td className="num">{row.count}</td>
-                    <td className="num">{money(row.total_cents)}</td>
-                  </tr>
-                ))}
+                {report.series.flatMap((row) => {
+                  const label = bucketLabel(report.period, row.bucket),
+                    open = expanded.includes(row.bucket);
+                  return [
+                    <tr key={row.bucket}>
+                      <td>
+                        {row.count ? (
+                          <button
+                            type="button"
+                            className="pos-report-toggle"
+                            aria-expanded={open}
+                            aria-label={(open ? 'Ocultar' : 'Ver') + ' el desglose de ' + label}
+                            onClick={() =>
+                              setExpanded((current) =>
+                                current.includes(row.bucket)
+                                  ? current.filter((key) => key !== row.bucket)
+                                  : [...current, row.bucket],
+                              )
+                            }
+                          >
+                            {open ? (
+                              <ChevronDown size={15} aria-hidden="true" />
+                            ) : (
+                              <ChevronRight size={15} aria-hidden="true" />
+                            )}
+                            {label}
+                          </button>
+                        ) : (
+                          label
+                        )}
+                      </td>
+                      <td className="num">{row.count}</td>
+                      <td className="num">{money(row.total_cents)}</td>
+                    </tr>,
+                    ...(open
+                      ? [
+                          <tr className="pos-report-detail" key={row.bucket + ':desglose'}>
+                            <td colSpan={3}>
+                              <BucketDetail row={row} />
+                            </td>
+                          </tr>,
+                        ]
+                      : []),
+                  ];
+                })}
               </tbody>
             </table>
           </div>

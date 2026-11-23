@@ -9,7 +9,9 @@ import {
   type PosPlan,
   type PosSaleDetail,
   type PosSales,
+  type PaymentMethod,
   type PosReport,
+  type PosReportMethod,
   type PosReportPeriod,
   type PlanGate,
   type MembershipSummary,
@@ -526,7 +528,19 @@ export class PosService {
         to,
         kind,
       );
-    const [totals, voided, before, rows, plans, products, by_method, by_cashier, productMargin] = await Promise.all([
+    const [
+      totals,
+      voided,
+      before,
+      rows,
+      lineRows,
+      methodRows,
+      plans,
+      products,
+      by_method,
+      by_cashier,
+      productMargin,
+    ] = await Promise.all([
       this.service.one(
         `SELECT COUNT(*) count,COALESCE(SUM(total_cents),0) total_cents FROM pos_sales s WHERE ${paid}`,
         from,
@@ -544,6 +558,20 @@ export class PosService {
       ),
       this.service.all(
         `SELECT ${bucket} bucket,COUNT(*) count,SUM(total_cents) total_cents FROM pos_sales s WHERE ${paid} GROUP BY bucket`,
+        from,
+        to,
+      ),
+      // El desglose de cada grupo: cuánto vino de planes y cuánto de productos.
+      this.service.all(
+        `SELECT ${bucket} bucket,l.kind kind,SUM(l.quantity) quantity,SUM(l.total_cents) total_cents
+         FROM pos_sale_lines l JOIN pos_sales s ON s.id=l.sale_id WHERE ${paid} GROUP BY bucket,l.kind`,
+        from,
+        to,
+      ),
+      // Y con qué se pagó en cada grupo.
+      this.service.all(
+        `SELECT ${bucket} bucket,s.payment_method,SUM(s.total_cents) total_cents,COUNT(*) count
+         FROM pos_sales s WHERE ${paid} GROUP BY bucket,s.payment_method ORDER BY total_cents DESC`,
         from,
         to,
       ),
@@ -567,6 +595,23 @@ export class PosService {
       ),
     ]);
     const found = new Map(rows.map((row) => [String(row.bucket), row]));
+    const lineTotals = new Map<string, { quantity: number; total_cents: number }>();
+    for (const row of lineRows)
+      lineTotals.set(`${row.bucket}:${row.kind}`, {
+        quantity: Number(row.quantity ?? 0),
+        total_cents: Number(row.total_cents ?? 0),
+      });
+    const methodsByBucket = new Map<string, PosReportMethod[]>();
+    for (const row of methodRows)
+      methodsByBucket.set(String(row.bucket), [
+        ...(methodsByBucket.get(String(row.bucket)) || []),
+        {
+          payment_method: row.payment_method as PaymentMethod,
+          total_cents: Number(row.total_cents ?? 0),
+          count: Number(row.count ?? 0),
+        },
+      ]);
+    const empty = { quantity: 0, total_cents: 0 };
     return {
       period,
       from,
@@ -584,6 +629,9 @@ export class PosService {
         bucket: key,
         count: Number(found.get(key)?.count ?? 0),
         total_cents: Number(found.get(key)?.total_cents ?? 0),
+        plans: lineTotals.get(key + ':plan') || empty,
+        products: lineTotals.get(key + ':product') || empty,
+        by_method: methodsByBucket.get(key) || [],
       })),
       plans,
       products: products.map((row) => ({ item_id: row.item_id, name: row.name, quantity: row.quantity, total_cents: row.total_cents,

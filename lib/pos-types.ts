@@ -151,6 +151,14 @@ export type PosSales = {
 export type PosReportPeriod = 'day' | 'week' | 'month' | 'year';
 export type PosReportTotals = { total_cents: number; count: number };
 export type PosReportItem = { item_id: string; name: string; quantity: number; total_cents: number; margin?: ProductMargin };
+export type PosReportMethod = { payment_method: PaymentMethod; total_cents: number; count: number };
+/** Una fila de la evolución con su desglose: cuánto fue de planes, cuánto de productos y cómo se pagó. */
+export type PosReportBucket = {
+  bucket: string;
+  plans: { quantity: number; total_cents: number };
+  products: { quantity: number; total_cents: number };
+  by_method: PosReportMethod[];
+} & PosReportTotals;
 export type PosReport = {
   period: PosReportPeriod;
   from: string;
@@ -162,9 +170,9 @@ export type PosReport = {
     previous: PosReportTotals & { from: string; to: string };
     product_margin?: ProductMargin;
   };
-  series: ({ bucket: string } & PosReportTotals)[];
+  series: PosReportBucket[];
   plans: PosReportItem[];
   products: PosReportItem[];
-  by_method: { payment_method: PaymentMethod; total_cents: number; count: number }[];
+  by_method: PosReportMethod[];
   by_cashier: { actor: string; name: string; total_cents: number; count: number }[];
 };
